@@ -222,7 +222,7 @@ function Bubble({ role, text, depth }) {
       </div>
       <div style={{maxWidth:"75%"}}>
         {isE && depth!==undefined && (
-          <div style={{fontSize:9,color:GOLD,letterSpacing:2,marginBottom:4,fontFamily:"system-ui",textTransform:"uppercase"}}>
+          <div style={{fontSize:12,color:GOLD,letterSpacing:2,marginBottom:4,fontFamily:"system-ui",textTransform:"uppercase"}}>
             {DEPTH_LABELS[Math.min(depth,3)]||"Surface"} probe
           </div>
         )}
@@ -230,7 +230,7 @@ function Bubble({ role, text, depth }) {
           background:isE?"#162840":"#1A3050",
           border:`1px solid ${isE?"#2A4A6E":"#2E5070"}`,
           borderRadius:isE?"4px 16px 16px 16px":"16px 4px 16px 16px",
-          padding:"10px 14px",color:PARCH,fontSize:14,lineHeight:1.6,fontFamily:"Georgia,serif"
+          padding:"10px 14px",color:PARCH,fontSize:18,lineHeight:1.8,fontFamily:"Georgia,serif"
         }}>{text}</div>
       </div>
     </div>
@@ -251,8 +251,8 @@ function ScenarioCard({ scenario, onClick }) {
         display:"flex",flexDirection:"column",gap:6
       }}>
       <div style={{fontSize:22,marginBottom:2}}>{scenario.icon}</div>
-      <div style={{color:PARCH,fontSize:14,fontFamily:"Georgia,serif",lineHeight:1.3}}>{scenario.label}</div>
-      <div style={{color:MUTED,fontSize:11,fontFamily:"system-ui",lineHeight:1.5}}>{scenario.sublabel}</div>
+      <div style={{color:PARCH,fontSize:18,fontFamily:"Georgia,serif",lineHeight:1.3}}>{scenario.label}</div>
+      <div style={{color:MUTED,fontSize:14,fontFamily:"system-ui",lineHeight:1.5}}>{scenario.sublabel}</div>
     </button>
   );
 }
@@ -511,7 +511,7 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
       alignItems:"center",justifyContent:"center",padding:"40px 24px",fontFamily:"Georgia,serif"}}>
       <div style={{fontSize:11,letterSpacing:6,color:GOLD,fontFamily:"system-ui",fontWeight:700,marginBottom:8}}>EPISTEMY</div>
       <h1 style={{color:PARCH,fontSize:36,fontWeight:400,textAlign:"center",margin:"0 0 10px",lineHeight:1.2}}>Oral Examination</h1>
-      <p style={{color:MUTED,fontSize:14,textAlign:"center",maxWidth:440,lineHeight:1.7,margin:"0 0 28px",fontStyle:"italic"}}>
+      <p style={{color:MUTED,fontSize:16,textAlign:"center",maxWidth:440,lineHeight:1.7,margin:"0 0 28px",fontStyle:"italic"}}>
         Four depth levels. Questions spoken aloud. Answer by voice or keyboard.
       </p>
       <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:28,
@@ -529,29 +529,16 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
         {voiceMode&&!micAvail&&<span style={{color:RED,fontSize:10,fontFamily:"system-ui"}}>Use Chrome/Edge for mic</span>}
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,width:"100%",maxWidth:560,marginBottom:14}}>
-        {DISCIPLINES.slice(0,4).map(d=>(
-          <button key={d.id} onClick={()=>handleDisciplineClick(d)} style={{
-            background:"#070F1C",border:"1px solid #1E3358",borderRadius:14,
-            padding:"24px 18px",cursor:"pointer",textAlign:"left",transition:"all 0.2s"}}
-            onMouseEnter={e=>{e.currentTarget.style.borderColor=GOLD;e.currentTarget.style.background="#0D1A2E";}}
-            onMouseLeave={e=>{e.currentTarget.style.borderColor="#1E3358";e.currentTarget.style.background="#070F1C";}}>
-            <div style={{fontSize:26,marginBottom:8}}>{d.icon}</div>
-            <div style={{color:PARCH,fontSize:15,marginBottom:3}}>{d.label}</div>
-            <div style={{color:GOLD,fontSize:10,letterSpacing:2,fontFamily:"system-ui"}}>{d.topic.toUpperCase()}</div>
-          </button>
-        ))}
-      </div>
       <button onClick={()=>handleDisciplineClick(DISCIPLINES[4])} style={{
         width:"100%",maxWidth:560,background:"#070F1C",border:"1px solid #1E3358",borderRadius:14,
-        padding:"20px 24px",cursor:"pointer",textAlign:"left",transition:"all 0.2s",
-        display:"flex",alignItems:"center",gap:20}}
+        padding:"32px 28px",cursor:"pointer",textAlign:"left",transition:"all 0.2s",
+        display:"flex",alignItems:"center",gap:24}}
         onMouseEnter={e=>{e.currentTarget.style.borderColor=GOLD;e.currentTarget.style.background="#0D1A2E";}}
         onMouseLeave={e=>{e.currentTarget.style.borderColor="#1E3358";e.currentTarget.style.background="#070F1C";}}>
-        <div style={{fontSize:26}}>✦</div>
+        <div style={{fontSize:36}}>✦</div>
         <div>
-          <div style={{color:PARCH,fontSize:16,marginBottom:3,fontFamily:"Georgia,serif"}}>Communications</div>
-          <div style={{color:GOLD,fontSize:10,letterSpacing:2,fontFamily:"system-ui"}}>WRITING I · INFORMATIVE BUSINESS DOCUMENTS →</div>
+          <div style={{color:PARCH,fontSize:22,marginBottom:6,fontFamily:"Georgia,serif"}}>Communications</div>
+          <div style={{color:GOLD,fontSize:11,letterSpacing:2,fontFamily:"system-ui"}}>WRITING I · INFORMATIVE BUSINESS DOCUMENTS →</div>
         </div>
       </button>
       <div style={{color:"#243550",fontSize:10,marginTop:28,letterSpacing:2,fontFamily:"system-ui"}}>UC BERKELEY SKYDECK · PAD-13</div>
@@ -571,10 +558,10 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
       <h1 style={{color:PARCH,fontSize:28,fontWeight:400,textAlign:"center",margin:"0 0 8px",lineHeight:1.2}}>
         Choose your scenario
       </h1>
-      <p style={{color:MUTED,fontSize:13,textAlign:"center",maxWidth:480,lineHeight:1.6,margin:"0 0 10px",fontStyle:"italic"}}>
+      <p style={{color:MUTED,fontSize:15,textAlign:"center",maxWidth:480,lineHeight:1.6,margin:"0 0 10px",fontStyle:"italic"}}>
         Informative business documents. 10-turn exam. Your document is built question by question.
       </p>
-      <p style={{color:MUTED,fontSize:12,textAlign:"center",maxWidth:480,lineHeight:1.6,margin:"0 0 28px",fontFamily:"system-ui"}}>
+      <p style={{color:MUTED,fontSize:14,textAlign:"center",maxWidth:480,lineHeight:1.6,margin:"0 0 28px",fontFamily:"system-ui"}}>
         Qualitative feedback is generated at the end of each session.
       </p>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,width:"100%",maxWidth:680}}>
@@ -610,8 +597,8 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
           ].map(s=>(
             <div key={s.label} style={{background:"#070F1C",border:"1px solid #1E3358",
               borderRadius:10,padding:"14px 12px",textAlign:"center"}}>
-              <div style={{color:GOLD,fontSize:18,fontWeight:700,marginBottom:4}}>{s.value}</div>
-              <div style={{color:MUTED,fontSize:9,letterSpacing:1,fontFamily:"system-ui"}}>{s.label.toUpperCase()}</div>
+              <div style={{color:GOLD,fontSize:22,fontWeight:700,marginBottom:4}}>{s.value}</div>
+              <div style={{color:MUTED,fontSize:12,letterSpacing:1,fontFamily:"system-ui"}}>{s.label.toUpperCase()}</div>
             </div>
           ))}
         </div>
@@ -626,7 +613,7 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
             {feedbackLoading ? (
               <div style={{color:MUTED,fontSize:13,fontStyle:"italic"}}>Generating feedback...</div>
             ) : (
-              <div style={{color:PARCH,fontSize:14,lineHeight:1.8,fontFamily:"Georgia,serif"}}>
+              <div style={{color:PARCH,fontSize:18,lineHeight:1.9,fontFamily:"Georgia,serif"}}>
                 {feedback || "No feedback available."}
               </div>
             )}
@@ -675,14 +662,14 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
           background:"#070F1C",flexShrink:0}}>
           <div style={{minWidth:0}}>
             <span style={{color:GOLD,fontSize:11,letterSpacing:3,fontFamily:"system-ui",fontWeight:700}}>EPISTEMY</span>
-            <span style={{color:MUTED,fontSize:11,marginLeft:12,fontFamily:"system-ui",
+            <span style={{color:MUTED,fontSize:13,marginLeft:12,fontFamily:"system-ui",
               overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
               {isW1 ? currentConfig.label : `${currentConfig?.label} · ${currentConfig?.topic}`}
             </span>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
             {/* turn counter */}
-            <span style={{fontSize:10,color:MUTED,fontFamily:"system-ui",letterSpacing:1}}>
+            <span style={{fontSize:12,color:MUTED,fontFamily:"system-ui",letterSpacing:1}}>
               TURN {turnLabel}
             </span>
             {ttsLoading&&<span style={{color:MUTED,fontSize:9,fontFamily:"system-ui",letterSpacing:1}}>LOADING...</span>}
@@ -712,10 +699,10 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
               <span style={{fontSize:18,flexShrink:0}}>{currentConfig.icon}</span>
               <div>
                 <div style={{color:GOLD,fontSize:9,letterSpacing:2,fontFamily:"system-ui",marginBottom:3}}>SCENARIO</div>
-                <div style={{color:SMOKE,fontSize:12,fontFamily:"system-ui",lineHeight:1.5,marginBottom:3}}>
+                <div style={{color:SMOKE,fontSize:15,fontFamily:"system-ui",lineHeight:1.5,marginBottom:3}}>
                   {currentConfig.sublabel}
                 </div>
-                <div style={{color:MUTED,fontSize:11,fontFamily:"system-ui",lineHeight:1.5}}>
+                <div style={{color:MUTED,fontSize:14,fontFamily:"system-ui",lineHeight:1.5}}>
                   <span style={{color:GOLD,opacity:.7}}>Audience: </span>{currentConfig.audience}
                 </div>
               </div>
@@ -729,7 +716,7 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
           {messages.map((m,i)=><Bubble key={i} role={m.role} text={m.text} depth={m.depth}/>)}
           {streaming&&<Bubble role="examiner" text={streaming+"▌"} depth={probeDepth}/>}
           {loading&&!streaming&&(
-            <div style={{color:MUTED,fontSize:13,padding:"4px 0 10px",fontStyle:"italic"}}>Considering...</div>
+            <div style={{color:MUTED,fontSize:15,padding:"4px 0 10px",fontStyle:"italic"}}>Considering...</div>
           )}
           <div ref={chatEnd}/>
         </div>
@@ -764,7 +751,7 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
               placeholder={micAvail&&voiceMode?"Click mic to speak, or type here...":"Type your answer and press Enter..."}
               rows={isW1?3:2}
               style={{flex:1,background:"#0D1A2E",border:"1px solid #1E3358",borderRadius:10,
-                padding:"10px 14px",color:PARCH,fontSize:14,fontFamily:"Georgia,serif",
+                padding:"10px 14px",color:PARCH,fontSize:18,fontFamily:"Georgia,serif",
                 resize:"none",outline:"none",lineHeight:1.5}}
             />
             {micAvail&&voiceMode&&(
@@ -824,10 +811,10 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
 
         {/* EDS */}
         <div>
-          <div style={{fontSize:9,color:MUTED,letterSpacing:2,fontFamily:"system-ui",marginBottom:8}}>SCORE</div>
+          <div style={{fontSize:12,color:MUTED,letterSpacing:2,fontFamily:"system-ui",marginBottom:8}}>SCORE</div>
           <EDSGauge score={normalizedEds}/>
           {isW1 && (
-            <div style={{fontSize:10,color:MUTED,fontFamily:"system-ui",textAlign:"center",marginTop:4}}>
+            <div style={{fontSize:12,color:MUTED,fontFamily:"system-ui",textAlign:"center",marginTop:4}}>
               Normalized · 10-turn scale
             </div>
           )}
@@ -835,13 +822,13 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
 
         {/* Probe depth */}
         <div>
-          <div style={{fontSize:9,color:MUTED,letterSpacing:2,fontFamily:"system-ui",marginBottom:8}}>PROBE DEPTH</div>
+          <div style={{fontSize:12,color:MUTED,letterSpacing:2,fontFamily:"system-ui",marginBottom:8}}>PROBE DEPTH</div>
           {DEPTH_LABELS.map((l,i)=>(
             <div key={l} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
               <div style={{width:8,height:8,borderRadius:"50%",
                 background:i<=probeDepth?GOLD:"#1E3358",transition:"background 0.4s"}}/>
               <span style={{color:i<=probeDepth?PARCH:MUTED,fontSize:11,
-                fontFamily:"system-ui",transition:"color 0.4s"}}>{l}</span>
+                fontFamily:"system-ui",transition:"color 0.4s",fontSize:14}}>{l}</span>
             </div>
           ))}
         </div>
@@ -850,7 +837,7 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
         {currentConfig?.concepts && (
           <>
             <div>
-              <div style={{fontSize:9,color:MUTED,letterSpacing:2,fontFamily:"system-ui",marginBottom:6}}>CONCEPT MAP</div>
+              <div style={{fontSize:12,color:MUTED,letterSpacing:2,fontFamily:"system-ui",marginBottom:6}}>CONCEPT MAP</div>
               <ConceptGraph
                 concepts={currentConfig.concepts}
                 active={activeNode}
@@ -861,12 +848,12 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
 
             {/* Traversal log */}
             <div>
-              <div style={{fontSize:9,color:MUTED,letterSpacing:2,fontFamily:"system-ui",marginBottom:6}}>TRAVERSAL LOG</div>
+              <div style={{fontSize:12,color:MUTED,letterSpacing:2,fontFamily:"system-ui",marginBottom:6}}>TRAVERSAL LOG</div>
               {travLog.length===0
                 ?<div style={{color:"#1E3358",fontSize:11,fontFamily:"system-ui"}}>—</div>
                 :travLog.map((c,i)=>(
                   <div key={i} style={{fontSize:11,fontFamily:"system-ui",marginBottom:4,
-                    color:i===0?GOLD:MUTED,opacity:1-i*0.13}}>
+                    color:i===0?GOLD:MUTED,opacity:1-i*0.13,fontSize:14}}>
                     {i===0?"▸ ":"  "}{c}
                   </div>
                 ))
@@ -875,12 +862,12 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
 
             {/* Coverage */}
             <div>
-              <div style={{fontSize:9,color:MUTED,letterSpacing:2,fontFamily:"system-ui",marginBottom:6}}>COVERAGE</div>
+              <div style={{fontSize:12,color:MUTED,letterSpacing:2,fontFamily:"system-ui",marginBottom:6}}>COVERAGE</div>
               <div style={{background:"#1E3358",borderRadius:4,height:6,overflow:"hidden"}}>
                 <div style={{height:"100%",borderRadius:4,background:GOLD,
                   width:`${(visited.length/currentConfig.concepts.length)*100}%`,transition:"width 0.5s"}}/>
               </div>
-              <div style={{color:MUTED,fontSize:10,fontFamily:"system-ui",marginTop:4}}>
+              <div style={{color:MUTED,fontSize:13,fontFamily:"system-ui",marginTop:4}}>
                 {visited.length} / {currentConfig.concepts.length}
               </div>
             </div>
