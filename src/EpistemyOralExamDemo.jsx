@@ -401,7 +401,7 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
         method:"POST",
         headers:{"Content-Type":"application/json","x-demo-token":DEMO_TOKEN},
         body:JSON.stringify({
-          model:"claude-sonnet-4-20250514", max_tokens:400,
+          model:"claude-sonnet-4-6", max_tokens:400,
           system:"You are a writing instructor. Be concise, specific, and encouraging without being vague. Do not use em dashes.",
           stream:true,
           messages:[{role:"user",content:feedbackPrompt}]
@@ -427,7 +427,7 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
         method:"POST",
         headers:{"Content-Type":"application/json","x-demo-token":DEMO_TOKEN},
         body:JSON.stringify({
-          model:"claude-sonnet-4-20250514", max_tokens:1000,
+          model:"claude-sonnet-4-6", max_tokens:1000,
           system:config.systemPrompt, stream:true,
           messages:msgs.map(m=>({role:m.role==="examiner"?"assistant":"user",content:m.text}))
         })
