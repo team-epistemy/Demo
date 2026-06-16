@@ -403,18 +403,13 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
         body:JSON.stringify({
           model:"claude-sonnet-4-6", max_tokens:400,
           system:"You are a writing instructor. Be concise, specific, and encouraging without being vague. Do not use em dashes.",
-          stream:true,
+          stream:false,
           messages:[{role:"user",content:feedbackPrompt}]
         })
       });
-      let full="";
-      const reader=res.body.getReader(), dec=new TextDecoder();
-      while(true){
-        const{done,value}=await reader.read(); if(done) break;
-        for(const line of dec.decode(value).split("\n").filter(l=>l.startsWith("data: "))){
-          try{ const d=JSON.parse(line.slice(6)); if(d.type==="content_block_delta"&&d.delta?.text){ full+=d.delta.text; setFeedback(full); } }catch{}
-        }
-      }
+      const feedData=await res.json();
+      const full=feedData.content?.[0]?.text||"";
+      setFeedback(full);
     }catch(err){ setFeedback("Feedback could not be generated at this time."); }
     setFeedbackLoading(false);
   },[]);
@@ -428,19 +423,14 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
         headers:{"Content-Type":"application/json","x-demo-token":DEMO_TOKEN},
         body:JSON.stringify({
           model:"claude-sonnet-4-6", max_tokens:1000,
-          system:config.systemPrompt, stream:true,
+          system:config.systemPrompt, stream:false,
           messages:msgs.map(m=>({role:m.role==="examiner"?"assistant":"user",content:m.text}))
         })
       });
       if(!res.ok) throw new Error(`HTTP ${res.status}`);
-      let full="";
-      const reader=res.body.getReader(), dec=new TextDecoder();
-      while(true){
-        const{done,value}=await reader.read(); if(done) break;
-        for(const line of dec.decode(value).split("\n").filter(l=>l.startsWith("data: "))){
-          try{ const d=JSON.parse(line.slice(6)); if(d.type==="content_block_delta"&&d.delta?.text){ full+=d.delta.text; setStreaming(full); } }catch{}
-        }
-      }
+      const data=await res.json();
+      const full=data.content?.[0]?.text||"";
+      if(!full) throw new Error("Empty response");
       setMessages(prev=>[...prev,{role:"examiner",text:full,depth}]);
       setStreaming("");
       advanceGraph(config);

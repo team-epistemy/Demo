@@ -30,6 +30,9 @@ export default async function handler(req) {
     });
   }
 
+  // Force non-streaming — more reliable on Vercel edge than piping SSE
+  body.stream = false;
+
   const upstream = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -40,11 +43,12 @@ export default async function handler(req) {
     body: JSON.stringify(body)
   });
 
-  return new Response(upstream.body, {
+  const data = await upstream.json();
+
+  return new Response(JSON.stringify(data), {
     status: upstream.status,
     headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
+      "Content-Type": "application/json",
       "Access-Control-Allow-Origin": "*"
     }
   });
