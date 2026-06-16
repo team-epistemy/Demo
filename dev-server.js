@@ -105,3 +105,22 @@ app.listen(PORT, () => {
   console.log(`ELEVENLABS_API_KEY: ${process.env.ELEVENLABS_API_KEY ? "✓ loaded" : "✗ missing"}`);
   console.log(`DEMO_TOKEN:         ${process.env.DEMO_TOKEN         ? "✓ loaded" : "✗ missing"}`);
 });
+
+// ── /api/complete — non-streaming, returns full JSON (for simulation) ─────────
+app.post("/api/complete", checkToken, async (req, res) => {
+  try {
+    const upstream = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({ ...req.body, stream: false })
+    });
+    const data = await upstream.json();
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
