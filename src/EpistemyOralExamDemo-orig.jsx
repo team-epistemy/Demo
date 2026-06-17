@@ -273,7 +273,6 @@ export default function EpistemyOralExamDemo() {
   const [travLog, setTravLog]           = useState([]);
   const [ttsActive, setTtsActive]       = useState(false);
   const [ttsLoading, setTtsLoading]     = useState(false);
-  const [ttsPaused, setTtsPaused]       = useState(false);
   const [micState, setMicState]         = useState("idle");
   const [liveText, setLiveText]         = useState("");
   const [voiceMode, setVoiceMode]       = useState(true);
@@ -316,20 +315,7 @@ export default function EpistemyOralExamDemo() {
   // ── Stop audio ────────────────────────────────────────────────────────────
   const stopAudio = useCallback(()=>{
     if(audioRef.current){ audioRef.current.pause(); audioRef.current=null; }
-    setTtsActive(false); setTtsLoading(false); setTtsPaused(false);
-  },[]);
-
-  const togglePause = useCallback(()=>{
-    if(!audioRef.current) return;
-    if(audioRef.current.paused){
-      audioRef.current.play();
-      setTtsPaused(false);
-      setTtsActive(true);
-    } else {
-      audioRef.current.pause();
-      setTtsPaused(true);
-      setTtsActive(false);
-    }
+    setTtsActive(false); setTtsLoading(false);
   },[]);
 
   // ── ElevenLabs TTS ────────────────────────────────────────────────────────
@@ -345,7 +331,7 @@ export default function EpistemyOralExamDemo() {
       if(!res.ok){ const e=await res.json().catch(()=>({})); setTtsError(`Voice error: ${e.error||res.status}`); setTtsLoading(false); return; }
       const blob=await res.blob(), url=URL.createObjectURL(blob), audio=new Audio(url);
       audioRef.current=audio;
-      audio.onplay=()=>{ setTtsLoading(false); setTtsActive(true); setTtsPaused(false); };
+      audio.onplay=()=>{ setTtsLoading(false); setTtsActive(true); };
       audio.onended=()=>{ stopAudio(); URL.revokeObjectURL(url); };
       audio.onerror=()=>{ stopAudio(); URL.revokeObjectURL(url); setTtsError("Audio playback failed."); };
       await audio.play();
@@ -677,10 +663,10 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
               TURN {turnLabel}
             </span>
             {ttsLoading&&<span style={{color:MUTED,fontSize:9,fontFamily:"system-ui",letterSpacing:1}}>LOADING...</span>}
-            {(ttsActive||ttsPaused)&&(
+            {ttsActive&&(
               <span style={{display:"flex",alignItems:"center",gap:5}}>
-                <span style={{width:7,height:7,borderRadius:"50%",background:ttsActive?GOLD:GREEN,display:"inline-block",animation:ttsActive?"pulse 1s infinite":"none"}}/>
-                <span style={{color:ttsActive?GOLD:GREEN,fontSize:9,fontFamily:"system-ui",letterSpacing:1}}>{ttsActive?"SPEAKING":"PAUSED"}</span>
+                <span style={{width:7,height:7,borderRadius:"50%",background:GOLD,display:"inline-block",animation:"pulse 1s infinite"}}/>
+                <span style={{color:GOLD,fontSize:9,fontFamily:"system-ui",letterSpacing:1}}>SPEAKING</span>
               </span>
             )}
             {micListening&&(
@@ -777,34 +763,15 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
               </button>
             )}
             {voiceMode&&(
-              <button
-                onClick={ttsActive||ttsPaused ? togglePause : replay}
-                title={ttsActive?"Pause":ttsPaused?"Resume":"Replay question"}
-                style={{
-                  width:50,height:50,borderRadius:"50%",border:"none",cursor:"pointer",
-                  background:ttsActive?"#1E3A5A":ttsPaused?"#1A3A1A":"#162840",
-                  display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,outline:"none",
-                  boxShadow:ttsActive?`0 0 0 3px ${GOLD}44`:ttsPaused?`0 0 0 3px ${GREEN}44`:"none",
-                  transition:"all 0.2s"}}>
-                {ttsActive ? (
-                  /* Pause icon — shown while speaking */
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                    <rect x="6" y="4" width="4" height="16" rx="1" fill={GOLD}/>
-                    <rect x="14" y="4" width="4" height="16" rx="1" fill={GOLD}/>
-                  </svg>
-                ) : ttsPaused ? (
-                  /* Resume icon — shown while paused */
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                    <polygon points="5,3 19,12 5,21" fill={GREEN}/>
-                  </svg>
-                ) : (
-                  /* Replay icon — shown when idle */
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                    <path d="M4 12a8 8 0 1 0 8-8" stroke={MUTED} strokeWidth="2" strokeLinecap="round" fill="none"/>
-                    <polyline points="4 6 4 12 10 12" stroke={MUTED} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-                    <polygon points="10,8 10,16 17,12" fill={MUTED}/>
-                  </svg>
-                )}
+              <button onClick={replay} title="Replay question" style={{
+                width:50,height:50,borderRadius:"50%",border:"none",cursor:"pointer",
+                background:ttsLoading||ttsActive?"#1E3A5A":"#162840",
+                display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,outline:"none"}}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <path d="M4 12a8 8 0 1 0 8-8" stroke={ttsActive?GOLD:MUTED} strokeWidth="2" strokeLinecap="round" fill="none"/>
+                  <polyline points="4 6 4 12 10 12" stroke={ttsActive?GOLD:MUTED} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                  <polygon points="10,8 10,16 17,12" fill={ttsActive?GOLD:MUTED}/>
+                </svg>
               </button>
             )}
             <button onClick={submit} disabled={loading||!input.trim()} style={{
@@ -821,7 +788,7 @@ Write exactly 5 sentences of feedback in a teacher's voice. Cite specific things
           <div style={{display:"flex",alignItems:"center",gap:10,marginTop:10}}>
             <Waveform active={ttsActive} color={GOLD} bars={14}/>
             <span style={{color:MUTED,fontSize:9,fontFamily:"system-ui",letterSpacing:1,minWidth:100,textAlign:"center"}}>
-              {ttsLoading?"LOADING VOICE...":ttsActive?"EXAMINER SPEAKING":ttsPaused?"PAUSED":micListening?"RECORDING":"STANDBY"}
+              {ttsLoading?"LOADING VOICE...":ttsActive?"EXAMINER SPEAKING":micListening?"RECORDING":"STANDBY"}
             </span>
             <Waveform active={micListening} color={GREEN} bars={14}/>
           </div>
