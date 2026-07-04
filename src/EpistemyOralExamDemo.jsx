@@ -1362,9 +1362,11 @@ function StudentPreview({ exam, config, onClose }) {
       `The current exam question is: "${q.q}" (topic: ${q.topic}). ` +
       `You scaffold: when an answer is incomplete, you do NOT give the answer away. Instead you ask ONE smaller guiding ` +
       `sub-question about an intermediate concept or a single causal link, so the student can build toward the answer themselves. ` +
-      `Assess the student's most recent answer in the running exchange for THIS question. ` +
+      `First decide whether the student genuinely attempted to answer THIS question with relevant content. ` +
+      `Treat "I don't know", "not sure", "no idea", blank replies, gibberish, off-topic answers, refusals, or asking to skip as NOT answered. ` +
+      `Assess the student's most recent answer in the running exchange for THIS question. "adequate" may be true only if "answered" is true. ` +
       `Respond ONLY with minified JSON, no prose and no code fences: ` +
-      `{"adequate": true or false, "feedback": "at most one short sentence noting what was strong or thin, used when moving on", ` +
+      `{"answered": true or false, "adequate": true or false, "feedback": "at most one short sentence noting what was strong or thin, used when moving on", ` +
       `"probe": "if not adequate, ONE short guiding sub-question toward an intermediate step; empty string if adequate"}`;
 
     let ctx = `Exam question: ${q.q}\n\n`;
@@ -1377,7 +1379,7 @@ function StudentPreview({ exam, config, onClose }) {
     }
     ctx += `Student's latest answer: ${studentText}`;
 
-    let adequate = true, feedback = "", probe = "", modelOk = false;
+    let adequate = true, feedback = "", probe = "", answered = true, modelOk = false;
     try {
       const data = await callModel({
         model: "claude-sonnet-4-6",
@@ -1389,6 +1391,7 @@ function StudentPreview({ exam, config, onClose }) {
       const s = txt.indexOf("{"), e = txt.lastIndexOf("}");
       const parsed = JSON.parse(txt.slice(s, e + 1));
       adequate = !!parsed.adequate;
+      answered = ("answered" in parsed) ? !!parsed.answered : answerQuality(studentText) > 0;
       feedback = (parsed.feedback || "").trim();
       probe = (parsed.probe || "").trim();
       modelOk = true;
@@ -1400,9 +1403,10 @@ function StudentPreview({ exam, config, onClose }) {
     // EDS reflects the evaluation, not a blind increment.
     let edsDelta;
     if (modelOk) {
-      if (adequate)   edsDelta = 8 + Math.floor(Math.random() * 6);
-      else if (probe) edsDelta = answerQuality(studentText) > 0 ? 3 : 0;
-      else            edsDelta = 0;
+      if (!answered)     edsDelta = 0;
+      else if (adequate) edsDelta = 8 + Math.floor(Math.random() * 6);
+      else if (probe)    edsDelta = 3;
+      else               edsDelta = 0;
     } else {
       edsDelta = Math.round(answerQuality(studentText) * 12); // 0 for non-answers
     }
@@ -2523,9 +2527,11 @@ function OralExam({ discipline, studentName, onBack }) {
       `The current exam question is: "${askedQ}". ` +
       `You scaffold: when an answer is incomplete, you do NOT give the answer away. Instead you ask ONE smaller guiding ` +
       `sub-question about an intermediate concept or a single causal link, so the student can build toward the answer themselves. ` +
-      `Assess the student's most recent answer in the running exchange for THIS question. ` +
+      `First decide whether the student genuinely attempted to answer THIS question with relevant content. ` +
+      `Treat "I don't know", "not sure", "no idea", blank replies, gibberish, off-topic answers, refusals, or asking to skip as NOT answered. ` +
+      `Assess the student's most recent answer in the running exchange for THIS question. "adequate" may be true only if "answered" is true. ` +
       `Respond ONLY with minified JSON, no prose and no code fences: ` +
-      `{"adequate": true or false, "feedback": "at most one short sentence noting what was strong or thin, used when moving on", ` +
+      `{"answered": true or false, "adequate": true or false, "feedback": "at most one short sentence noting what was strong or thin, used when moving on", ` +
       `"probe": "if not adequate, ONE short guiding sub-question toward an intermediate step; empty string if adequate"}`;
 
     let ctx = `Exam question: ${askedQ}\n\n`;
@@ -2538,7 +2544,7 @@ function OralExam({ discipline, studentName, onBack }) {
     }
     ctx += `Student's latest answer: ${studentText}`;
 
-    let adequate = true, feedback = "", probe = "", modelOk = false;
+    let adequate = true, feedback = "", probe = "", answered = true, modelOk = false;
     try {
       const data = await callModel({
         model: "claude-sonnet-4-6",
@@ -2550,6 +2556,7 @@ function OralExam({ discipline, studentName, onBack }) {
       const s = txt.indexOf("{"), e = txt.lastIndexOf("}");
       const parsed = JSON.parse(txt.slice(s, e + 1));
       adequate = !!parsed.adequate;
+      answered = ("answered" in parsed) ? !!parsed.answered : answerQuality(studentText) > 0;
       feedback = (parsed.feedback || "").trim();
       probe = (parsed.probe || "").trim();
       modelOk = true;
@@ -2565,11 +2572,12 @@ function OralExam({ discipline, studentName, onBack }) {
     // EDS reflects the evaluation, not a blind increment.
     let edsDelta;
     if (modelOk) {
-      if (adequate)      edsDelta = 8 + Math.floor(Math.random() * 6);           // solid answer
-      else if (probe)    edsDelta = answerQuality(studentText) > 0 ? 3 : 0;      // partial, engaged
+      if (!answered)     edsDelta = 0;                                // no genuine attempt → EDS unchanged
+      else if (adequate) edsDelta = 8 + Math.floor(Math.random() * 6);// solid answer
+      else if (probe)    edsDelta = 3;                                // genuine partial attempt
       else               edsDelta = 0;
     } else {
-      edsDelta = Math.round(answerQuality(studentText) * 12);                    // 0 for non-answers
+      edsDelta = Math.round(answerQuality(studentText) * 12);         // 0 for non-answers
     }
     const earned = edsDelta > 0;
 
