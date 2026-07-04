@@ -956,7 +956,7 @@ async function generateExams(config, onProgress) {
     { msg: "Mapping concept graph…", pct: 20, delay: 700 },
     { msg: "Scoring prerequisite chains…", pct: 45, delay: 900 },
     { msg: "Distributing across EDS dimensions…", pct: 70, delay: 800 },
-    { msg: "Generating 3 exam variants…", pct: 90, delay: 600 },
+    { msg: "Assembling your exam…", pct: 90, delay: 600 },
   ];
   for (const s of steps) {
     await new Promise(r => setTimeout(r, s.delay));
@@ -1163,7 +1163,7 @@ function StepUpload({ onNext }) {
           </div>
           <div className="card-footer">
             <div style={{ fontSize: 13, color: T.muted }}>{topics.length} topics extracted</div>
-            <button className="btn-primary" onClick={() => onNext(topics)}>Build Exam →</button>
+            <button className="btn-primary" onClick={() => onNext(topics)}>Configure Exam →</button>
           </div>
         </>
       )}
@@ -1214,7 +1214,7 @@ function StepConfigExam({ topics, onNext }) {
     <div className="card">
       <div className="card-title">Configure the Exam</div>
       <div className="card-subtitle">
-        Choose which topics to include, set length and question count, and select the epistemic depth focus. Epistemy will generate three exam variants for you to choose from.
+        Choose which topics to include, set length and question count, and select the epistemic depth focus. Epistemy builds the exam from your selections. You can review and fine-tune the questions on the next screen.
       </div>
 
       <div className="section-label">Topics to Include
@@ -1287,7 +1287,7 @@ function StepConfigExam({ topics, onNext }) {
           onClick={handleGenerate}
           disabled={generating || selectedTopics.length === 0}
         >
-          ✦ Generate 3 Exam Options →
+          ✦ Build Exam →
         </button>
       </div>
     </div>
@@ -1625,36 +1625,85 @@ function StepComplete({ exam, config }) {
   const chosen = exam;
   const [linkCopied, setLinkCopied] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  const [showCounts, setShowCounts] = useState(false);
+  const [showQuestions, setShowQuestions] = useState(true);
   const [showTranscript, setShowTranscript] = useState(false);
 
-  // Per-topic question counts (simplified: count only)
-  const [dist, setDist] = useState(() =>
-    chosen ? chosen.distribution.map(d => ({ label: d.label, count: d.count })) : []);
-  const totalQ = dist.reduce((s, r) => s + r.count, 0);
-  const origTotal = chosen ? chosen.distribution.reduce((s, d) => s + d.count, 0) : 0;
-  const countsCustom = chosen ? dist.some((r, i) => r.count !== chosen.distribution[i].count) : false;
-  function setCount(i, val) { setDist(prev => prev.map((r, idx) => idx === i ? { ...r, count: Math.max(0, val) } : r)); }
-  function resetCounts() { if (chosen) setDist(chosen.distribution.map(d => ({ label: d.label, count: d.count }))); }
+  const poolFor = (id, label) => (QUESTION_POOL[id] && QUESTION_POOL[id].length)
+    ? QUESTION_POOL[id]
+    : GENERIC_Q.map(fn => fn(label));
 
-  // Per-question scoring: the actual questions the student will face
-  const bank = STUDENT_BANKS[chosen && chosen.bankKey] || STUDENT_BANKS.balanced;
-  const [qScores, setQScores] = useState(() => bank.map(qq => ({ topic: qq.topic, q: qq.q, score: 10 })));
-  const scoreTotal = qScores.reduce((s, r) => s + r.score, 0) || 1;
-  function setQScore(i, val) { setQScores(prev => prev.map((r, idx) => idx === i ? { ...r, score: Math.max(0, val) } : r)); }
-  function resetScores() { setQScores(bank.map(qq => ({ topic: qq.topic, q: qq.q, score: 10 }))); }
+  const initialSel = () => (chosen ? chosen.distribution : []).map(d => {
+    const pool = poolFor(d.id, d.label);
+    const k = Math.min(d.count, pool.length);
+    return { id: d.id, label: d.label, pool, state: pool.map((_, i) => i < k) };
+  });
+
+  // Per-topic selection: each topic has its question pool + a boolean per question (in-exam / removed)
+  const [sel, setSel] = useState(initialSel);
+
+  const countFor = t => t.state.filter(Boolean).length;
+  const totalQ = sel.reduce((s, t) => s + countFor(t), 0);
+  const origTotal = chosen ? chosen.distribution.reduce((s, d) => s + d.count, 0) : 0;
+  const custom = chosen ? sel.some((t, ti) => countFor(t) !== chosen.distribution[ti].count) : false;
+
+  function toggleQ(ti, qi) {
+    setSel(prev => prev.map((t, i) => i === ti
+      ? { ...t, state: t.state.map((v, j) => j === qi ? !v : v) } : t));
+  }
+  function decTopic(ti) {
+    setSel(prev => prev.map((t, i) => {
+      if (i !== ti) return t;
+      const on = t.state.map((v, j) => (v ? j : -1)).filter(j => j >= 0);
+      if (!on.length) return t;
+      const pick = on[Math.floor(Math.random() * on.length)]; // random question marked for removal
+      return { ...t, state: t.state.map((v, j) => (j === pick ? false : v)) };
+    }));
+  }
+  function incTopic(ti) {
+    setSel(prev => prev.map((t, i) => {
+      if (i !== ti) return t;
+      const off = t.state.findIndex(v => !v);
+      if (off < 0) return t; // no more questions in this topic's bank
+      return { ...t, state: t.state.map((v, j) => (j === off ? true : v)) };
+    }));
+  }
+  function resetSel() { if (chosen) setSel(initialSel()); }
+
+  // Assembled selected questions -> student exam, preview, transcript, rubric
+  const assembled = sel.flatMap(t => t.pool.filter((_, j) => t.state[j]).map(q => ({ topic: t.label, q })));
+
+  // Keep the live student/preview exam in sync with the professor's edits
+  useEffect(() => {
+    if (chosen) ExamStore.questions = assembled.length ? assembled : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel]);
+
+  // Per-question scores, keyed by question text so they survive add/remove edits
+  const [scoreMap, setScoreMap] = useState({});
+  const transcriptQs = assembled.map(a => ({ topic: a.topic, q: a.q, score: scoreMap[a.q] != null ? scoreMap[a.q] : 10 }));
+  const scoreTotal = transcriptQs.reduce((s, r) => s + r.score, 0) || 1;
+  function setQScore(i, val) {
+    const q = transcriptQs[i] && transcriptQs[i].q;
+    if (q == null) return;
+    setScoreMap(prev => ({ ...prev, [q]: Math.max(0, val) }));
+  }
+  function resetScores() { setScoreMap({}); }
+
+  const distForExport = sel.map(t => ({ label: t.label, count: countFor(t) }));
 
   const examLink = `https://app.epistemy.ai/exam/haas-mba-finance-${chosen && chosen.id}-${Date.now().toString(36)}`;
-
   function handleShare() {
-    navigator.clipboard.writeText(examLink).then(() => {
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 3000);
-    }).catch(() => {
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 3000);
-    });
+    navigator.clipboard.writeText(examLink)
+      .then(() => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 3000); })
+      .catch(() => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 3000); });
   }
+
+  const stepBtn = (disabled) => ({
+    width: 26, height: 26, borderRadius: 6, border: `1px solid ${T.border}`,
+    background: T.white, color: T.navy, fontSize: 16, lineHeight: 1,
+    cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.4 : 1,
+    display: "flex", alignItems: "center", justifyContent: "center",
+  });
 
   return (
     <>
@@ -1662,7 +1711,7 @@ function StepComplete({ exam, config }) {
         <StudentPreview exam={chosen} config={config} onClose={() => setShowPreview(false)} />
       )}
       {showTranscript && (
-        <QuestionTranscript questions={qScores} scoreTotal={scoreTotal}
+        <QuestionTranscript questions={transcriptQs} scoreTotal={scoreTotal}
           setQScore={setQScore} resetScores={resetScores} onClose={() => setShowTranscript(false)} />
       )}
       <div className="card">
@@ -1694,52 +1743,86 @@ function StepComplete({ exam, config }) {
             </div>
           )}
 
-          {/* Question count editor (simplified to counts only) */}
+          {/* Questions by topic */}
           <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, marginBottom: 20,
             textAlign: "left", overflow: "hidden" }}>
             <button
-              onClick={() => setShowCounts(s => !s)}
+              onClick={() => setShowQuestions(s => !s)}
               style={{ width: "100%", background: T.parchment, border: "none",
                 padding: "12px 16px", cursor: "pointer", display: "flex",
                 alignItems: "center", justifyContent: "space-between",
                 fontSize: 14, fontWeight: 700, color: T.navy, fontFamily: "Inter, sans-serif" }}>
-              <span>📋 Question Count{countsCustom ? " · customized" : ""}</span>
-              <span style={{ color: T.muted }}>{showCounts ? "▲" : "▼"}</span>
+              <span>📋 Questions by Topic{custom ? " · customized" : ""}</span>
+              <span style={{ color: T.muted }}>{showQuestions ? "▲" : "▼"}</span>
             </button>
-            {showCounts && (
+            {showQuestions && (
               <div style={{ padding: "14px 16px", borderTop: `1px solid ${T.border}` }}>
-                <p style={{ fontSize: 12, color: T.inkLight, margin: "0 0 14px", lineHeight: 1.55 }}>
-                  Set the number of questions per topic.
+                <p style={{ fontSize: 12, color: T.inkLight, margin: "0 0 16px", lineHeight: 1.6 }}>
+                  These are the questions students will be asked, grouped by topic. Press − to drop a question
+                  (one is chosen at random; click any question to change which is in or out), or + to add another
+                  from the topic's bank.
                 </p>
-                {dist.map((r, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
-                    <span style={{ flex: 1, fontSize: 13, color: T.ink }}>{r.label}</span>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <button onClick={() => setCount(i, r.count - 1)} disabled={r.count <= 0}
-                        style={{ width: 24, height: 24, borderRadius: 6, border: `1px solid ${T.border}`,
-                          background: T.white, color: T.navy, fontSize: 16, lineHeight: 1,
-                          cursor: r.count <= 0 ? "default" : "pointer", opacity: r.count <= 0 ? 0.4 : 1,
-                          display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
-                      <span style={{ width: 22, textAlign: "center", fontSize: 14, fontWeight: 700, color: T.navy }}>{r.count}</span>
-                      <button onClick={() => setCount(i, r.count + 1)}
-                        style={{ width: 24, height: 24, borderRadius: 6, border: `1px solid ${T.border}`,
-                          background: T.white, color: T.navy, fontSize: 16, lineHeight: 1, cursor: "pointer",
-                          display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+
+                {sel.map((t, ti) => {
+                  const cnt = countFor(t);
+                  const canAdd = t.state.some(v => !v);
+                  return (
+                    <div key={ti} style={{ marginBottom: 18, paddingBottom: 14,
+                      borderBottom: ti < sel.length - 1 ? `1px solid ${T.border}` : "none" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+                        <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: T.navy }}>{t.label}</span>
+                        <span style={{ fontSize: 11, color: T.muted }}>{cnt} question{cnt === 1 ? "" : "s"}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <button onClick={() => decTopic(ti)} disabled={cnt <= 0} style={stepBtn(cnt <= 0)}>−</button>
+                          <button onClick={() => incTopic(ti)} disabled={!canAdd} style={stepBtn(!canAdd)}>+</button>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {t.pool.map((q, qi) => {
+                          const on = t.state[qi];
+                          return (
+                            <div key={qi} onClick={() => toggleQ(ti, qi)}
+                              title={on ? "Click to remove from exam" : "Click to add to exam"}
+                              style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer",
+                                background: on ? T.white : "transparent",
+                                border: `1px solid ${on ? T.border : "transparent"}`,
+                                borderLeft: on ? `3px solid ${T.gold}` : `3px solid transparent`,
+                                borderRadius: 8, padding: "9px 12px" }}>
+                              <span style={{ flexShrink: 0, marginTop: 1, width: 16, height: 16, borderRadius: 4,
+                                border: `1.5px solid ${on ? T.gold : T.border}`, background: on ? T.gold : "transparent",
+                                color: "white", fontSize: 11, fontWeight: 800, lineHeight: "13px", textAlign: "center" }}>
+                                {on ? "✓" : ""}
+                              </span>
+                              <span style={{ flex: 1, fontSize: 13, lineHeight: 1.5,
+                                color: on ? T.ink : T.muted,
+                                textDecoration: on ? "none" : "line-through" }}>
+                                {q}
+                              </span>
+                              <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+                                letterSpacing: "0.04em", color: on ? T.success : T.muted, marginTop: 2 }}>
+                                {on ? "In exam" : "Removed"}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
+
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
-                  marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
+                  marginTop: 4, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
                   <span style={{ fontSize: 13, color: T.ink }}>
                     Total questions: <strong style={{ color: T.navy }}>{totalQ}</strong>
                     {totalQ !== origTotal && (
                       <span style={{ color: T.gold, marginLeft: 8, fontSize: 12 }}>was {origTotal}</span>
                     )}
                   </span>
-                  <button onClick={resetCounts} disabled={!countsCustom}
+                  <button onClick={resetSel} disabled={!custom}
                     style={{ background: "transparent", border: `1px solid ${T.border}`,
                       borderRadius: 6, padding: "5px 12px", fontSize: 12, color: T.inkLight,
-                      cursor: countsCustom ? "pointer" : "default", opacity: countsCustom ? 1 : 0.5 }}>
+                      cursor: custom ? "pointer" : "default", opacity: custom ? 1 : 0.5 }}>
                     Reset to default
                   </button>
                 </div>
@@ -1757,7 +1840,7 @@ function StepComplete({ exam, config }) {
             <button className="btn-secondary" onClick={() => setShowTranscript(true)}>
               📝 Question Transcript
             </button>
-            <button className="btn-secondary" onClick={() => exportRubric(chosen, config, dist, qScores)}>
+            <button className="btn-secondary" onClick={() => exportRubric(chosen, config, distForExport, transcriptQs)}>
               📄 Export Rubric
             </button>
           </div>
@@ -2143,7 +2226,6 @@ function OralExam({ discipline, studentName, onBack, previewMode }) {
   const [draft, setDraft]       = useState("");
   const [loading, setLoading]   = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [graphView, setGraphView] = useState("questions");
 
   const [listening, setListening]   = useState(false);
   const [interimText, setInterimText] = useState("");
@@ -2173,8 +2255,6 @@ function OralExam({ discipline, studentName, onBack, previewMode }) {
   }
   const questionsTraversed = nodeIdsFor(visitedCount);
   const responsesTraversed = nodeIdsFor(respondedCount);
-  const shownTraversed = graphView === "questions" ? questionsTraversed : responsesTraversed;
-  const shownCount = shownTraversed.length;
 
   // ── TTS ──
   async function speak(text){
@@ -2199,12 +2279,11 @@ function OralExam({ discipline, studentName, onBack, previewMode }) {
   }
   function pauseCurrent(){ if(ttsState==="playing" && audioRef.current){ audioRef.current.pause(); setTtsState("paused"); } }
 
+  // Stop any spoken prompt when the student navigates to a different question.
+  // Playback only starts when the Play button is pressed (no auto-play).
   useEffect(()=>{
-    if(submitted) return;
     if(audioRef.current){ audioRef.current.pause(); audioRef.current=null; }
     setTtsState("idle");
-    const t = setTimeout(()=>{ if(curLatestEval) speak(curLatestEval); }, 350);
-    return ()=>clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current, submitted]);
 
@@ -2292,18 +2371,13 @@ function OralExam({ discipline, studentName, onBack, previewMode }) {
       };
     }));
     setLoading(false);
-    setTimeout(()=>{ speak(bubble); scrollBottom(); }, 250);
+    setTimeout(()=>{ scrollBottom(); }, 250);
   }
 
   function submitExam(){
     if(audioRef.current){ audioRef.current.pause(); audioRef.current=null; }
     setSubmitted(true);
   }
-
-  const tabStyle = (active) => ({
-    flex:1, border:"none", borderRadius:6, padding:"6px 8px", fontSize:12, fontWeight:700, cursor:"pointer",
-    background: active ? T.navy : "transparent", color: active ? "white" : T.inkLight,
-  });
 
   // ── Results view ──
   if(submitted){
@@ -2477,34 +2551,36 @@ function OralExam({ discipline, studentName, onBack, previewMode }) {
               </div>
             </div>
 
-            {/* Concept graph, two views */}
-            <div style={{ padding:"14px 12px", borderBottom:`1px solid ${T.border}` }}>
-              <div style={{ fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.07em", color:T.muted, marginBottom:9, paddingLeft:4 }}>
-                Concept Graph
-              </div>
-              <div style={{ display:"flex", gap:4, background:T.parchment, borderRadius:8, padding:3, marginBottom:9 }}>
-                <button onClick={()=>setGraphView("questions")} style={tabStyle(graphView==="questions")}>By questions</button>
-                <button onClick={()=>setGraphView("responses")} style={tabStyle(graphView==="responses")}>By responses</button>
-              </div>
-              <div style={{ fontSize:10, color:T.muted, marginBottom:8, paddingLeft:4, lineHeight:1.5 }}>
-                {graphView==="questions"
-                  ? "Concepts covered by the questions reached so far."
-                  : "Concepts demonstrated by the student's responses."}
-              </div>
-              <div style={{ height:180, overflow:"hidden" }}>
-                <ConceptGraph discipline={discipline} traversed={shownTraversed} />
-              </div>
-              <div style={{ marginTop:10 }}>
-                <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, marginBottom:5 }}>
-                  <span style={{ color:T.muted, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em" }}>Coverage</span>
-                  <span style={{ color:T.navy, fontWeight:700 }}>{shownCount}/{discipline.nodes.length}</span>
+            {/* Concept graphs: questions and responses, stacked vertically */}
+            {[
+              { key:"questions", title:"Concept Graph · By Questions", caption:"Concepts covered by the questions reached so far.", traversed:questionsTraversed },
+              { key:"responses", title:"Concept Graph · By Responses", caption:"Concepts demonstrated by the student's responses.", traversed:responsesTraversed },
+            ].map(v => {
+              const c = v.traversed.length;
+              return (
+                <div key={v.key} style={{ padding:"14px 12px", borderBottom:`1px solid ${T.border}` }}>
+                  <div style={{ fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", color:T.muted, marginBottom:5, paddingLeft:4 }}>
+                    {v.title}
+                  </div>
+                  <div style={{ fontSize:10, color:T.muted, marginBottom:8, paddingLeft:4, lineHeight:1.5 }}>
+                    {v.caption}
+                  </div>
+                  <div style={{ height:170, overflow:"hidden" }}>
+                    <ConceptGraph discipline={discipline} traversed={v.traversed} />
+                  </div>
+                  <div style={{ marginTop:10 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, marginBottom:5 }}>
+                      <span style={{ color:T.muted, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em" }}>Coverage</span>
+                      <span style={{ color:T.navy, fontWeight:700 }}>{c}/{discipline.nodes.length}</span>
+                    </div>
+                    <div style={{ background:T.border, borderRadius:4, height:7, overflow:"hidden" }}>
+                      <div style={{ height:"100%", borderRadius:4, width:`${(c/discipline.nodes.length)*100}%`,
+                        background:`linear-gradient(90deg, ${T.gold}, ${T.goldLight})`, transition:"width 0.5s ease" }} />
+                    </div>
+                  </div>
                 </div>
-                <div style={{ background:T.border, borderRadius:4, height:7, overflow:"hidden" }}>
-                  <div style={{ height:"100%", borderRadius:4, width:`${(shownCount/discipline.nodes.length)*100}%`,
-                    background:`linear-gradient(90deg, ${T.gold}, ${T.goldLight})`, transition:"width 0.5s ease" }} />
-                </div>
-              </div>
-            </div>
+              );
+            })}
 
             {/* EDS score (moved to the bottom) */}
             <div style={{ padding:"16px 14px", textAlign:"center" }}>
@@ -2576,7 +2652,6 @@ const STEPS = [
   { label: "Course Setup" },
   { label: "Upload Material" },
   { label: "Configure Exam" },
-  { label: "Choose Exam" },
 ];
 
 function InstructorApp({ onSwitchRole }) {
@@ -2587,18 +2662,18 @@ function InstructorApp({ onSwitchRole }) {
   const [chosenExam, setChosenExam] = useState(null);
   const [complete, setComplete] = useState(false);
 
-  // Effective position (5 = completion screen) and the furthest step you can jump back to.
-  const current = complete ? 5 : step;
-  const maxReached = complete ? 4 : step;
+  // Effective position (4 = completion screen) and the furthest step you can jump back to.
+  const current = complete ? 4 : step;
+  const maxReached = complete ? 3 : step;
   function goToStep(idx) {
     if (idx >= 1 && idx <= maxReached) { setComplete(false); setStep(idx); }
   }
   function goBack() {
-    if (complete) { setComplete(false); setStep(4); return; }
+    if (complete) { setComplete(false); setStep(3); return; }
     if (step > 1) setStep(step - 1);
   }
   const canGoBack = complete || step > 1;
-  const backTarget = complete ? "Choose Exam" : (STEPS[step - 1] ? STEPS[step - 1].label : "");
+  const backTarget = complete ? "Configure Exam" : (STEPS[step - 1] ? STEPS[step - 1].label : "");
 
   return (
     <div className="app">
@@ -2653,8 +2728,17 @@ function InstructorApp({ onSwitchRole }) {
         {step === 0 && <StepLogin onNext={() => setStep(1)} />}
         {step === 1 && !complete && <StepOnboard onNext={() => setStep(2)} />}
         {step === 2 && !complete && <StepUpload onNext={(t) => { setTopics(t); setStep(3); }} />}
-        {step === 3 && !complete && <StepConfigExam topics={topics} onNext={(e, cfg) => { setExams(e); setExamConfig(cfg); setStep(4); }} />}
-        {step === 4 && !complete && <StepChooseExam exams={exams} config={examConfig} onNext={(exam) => { if (!exam) return; ExamStore.trackId = exam.bankKey; ExamStore.trackLabel = exam.title; ExamStore.questions = assembleExamQuestions(exam.distribution); setChosenExam(exam); setComplete(true); }} />}
+        {step === 3 && !complete && <StepConfigExam topics={topics} onNext={(e, cfg) => {
+          setExams(e); setExamConfig(cfg);
+          const def = e && e.length ? e[0] : null;
+          if (def) {
+            ExamStore.trackId = def.bankKey;
+            ExamStore.trackLabel = def.title;
+            ExamStore.questions = assembleExamQuestions(def.distribution);
+            setChosenExam(def);
+          }
+          setComplete(true);
+        }} />}
         {complete && <StepComplete exam={chosenExam} config={examConfig} />}
       </main>
     </div>
