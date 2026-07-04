@@ -1323,7 +1323,13 @@ Rules:
               Question {currentQ + 1} <span style={{ color: T.muted, fontWeight: 400 }}>of {questions.length}</span>
               <span style={{ marginLeft: 14, color: T.muted, fontWeight: 400, fontSize: 12 }}>{q?.topic}</span>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {/* Behind-the-scenes tag */}
+              <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.04em", color: T.gold,
+                border: `1px dashed ${T.gold}`, borderRadius: 6, padding: "2px 6px",
+                textTransform: "uppercase", whiteSpace: "nowrap" }}>
+                🔍 Behind the Scenes
+              </span>
               {/* Turn counter */}
               <div style={{ fontSize: 12, color: T.muted }}>
                 Turn <span style={{ fontWeight: 700, color: T.inkLight }}>{studentTurnCount}</span>
@@ -1512,19 +1518,28 @@ Rules:
 }
 
 // ── Rubric export ──
-function exportRubric(chosen, config) {
-  const dist = chosen.distribution.map(d => `
+function exportRubric(chosen, config, weights) {
+  const wList = (weights && weights.length === chosen.distribution.length)
+    ? weights
+    : chosen.distribution.map(d => ({ label: d.label, weight: d.count }));
+  const wTotal = wList.reduce((s, w) => s + w.weight, 0) || 1;
+
+  const dist = chosen.distribution.map((d, i) => {
+    const w = wList[i] ? wList[i].weight : d.count;
+    const pct = Math.round((w / wTotal) * 100);
+    return `
     <tr>
       <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;">${d.label}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;text-align:center;">${d.count}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;text-align:center;">${Math.round((d.count / chosen.qCount) * 100)}%</td>
-    </tr>`).join("");
+      <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;text-align:center;font-weight:700;color:#1B2A4A;">${pct}%</td>
+    </tr>`;
+  }).join("");
 
   const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Exam Rubric — ${chosen.title}</title>
+  <title>Exam Rubric · ${chosen.title}</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@400;600;700&display=swap');
     body { font-family:'Inter',sans-serif; background:#F5F0E8; margin:0; padding:40px; color:#2C2416; }
@@ -1556,7 +1571,7 @@ function exportRubric(chosen, config) {
 <body>
 <div class="page">
   <div class="rubric-header">
-    <h1>${chosen.title} — Scoring Rubric</h1>
+    <h1>${chosen.title} · Scoring Rubric</h1>
     <p>Epistemy.AI · MBA Finance Core · Prof. Matteo Benetton · UC Berkeley Haas · ${new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})}</p>
   </div>
   <div class="rubric-body">
@@ -1568,9 +1583,16 @@ function exportRubric(chosen, config) {
       <div class="meta-item"><div class="meta-label">Topics</div><div class="meta-value">${config.selectedTopics.length} covered</div></div>
     </div>
 
+    <h2>Question Distribution</h2>
+    <p style="font-size:13px;color:#8A7F6E;margin:-6px 0 14px;">Score weight reflects how much each topic contributes to the final grade. Question counts and weights are set by the instructor.</p>
+    <table>
+      <thead><tr><th>Topic</th><th style="text-align:center">Questions</th><th style="text-align:center">Score Weight</th></tr></thead>
+      <tbody>${dist}</tbody>
+    </table>
+
     <h2>Epistemic Depth Score (EDS) Model</h2>
     <div class="eds-box">
-      EDS measures the <strong>depth and structure of causal understanding</strong> — not surface recall. 
+      EDS measures the <strong>depth and structure of causal understanding</strong>, not surface recall. 
       Each student response is evaluated against the concept graph derived from course material, scoring 
       how far the student can traverse prerequisite chains and explain causal relationships.
     </div>
@@ -1578,12 +1600,6 @@ function exportRubric(chosen, config) {
     <div class="dimension-row"><div class="dim-label">Prerequisite Chain Count</div><div class="dim-weight">25%</div><div class="dim-bar-wrap"><div class="dim-bar" style="width:25%"></div></div></div>
     <div class="dimension-row"><div class="dim-label">Abstraction Level</div><div class="dim-weight">20%</div><div class="dim-bar-wrap"><div class="dim-bar" style="width:20%"></div></div></div>
     <div class="dimension-row"><div class="dim-label">LLM Resistance Score</div><div class="dim-weight">15%</div><div class="dim-bar-wrap"><div class="dim-bar" style="width:15%"></div></div></div>
-
-    <h2>Question Distribution</h2>
-    <table>
-      <thead><tr><th>Topic</th><th style="text-align:center">Questions</th><th style="text-align:center">Weight</th></tr></thead>
-      <tbody>${dist}</tbody>
-    </table>
 
     <h2>EDS Score Bands</h2>
     <table>
@@ -1643,7 +1659,21 @@ function StepComplete({ examId, config }) {
   const chosen = SAMPLE_EXAMS.find(e => e.id === examId);
   const [linkCopied, setLinkCopied] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [showWeights, setShowWeights] = useState(false);
+  const [weights, setWeights] = useState(() =>
+    chosen ? chosen.distribution.map(d => ({ label: d.label, weight: d.count })) : []);
   const examLink = `https://app.epistemy.ai/exam/haas-mba-finance-${examId}-${Date.now().toString(36)}`;
+
+  const wTotal = weights.reduce((s, w) => s + w.weight, 0) || 1;
+  const isCustom = chosen
+    ? weights.some((w, i) => w.weight !== chosen.distribution[i].count)
+    : false;
+  function setWeight(i, val) {
+    setWeights(prev => prev.map((w, idx) => idx === i ? { ...w, weight: val } : w));
+  }
+  function resetWeights() {
+    if (chosen) setWeights(chosen.distribution.map(d => ({ label: d.label, weight: d.count })));
+  }
 
   function handleShare() {
     navigator.clipboard.writeText(examLink).then(() => {
@@ -1708,6 +1738,58 @@ function StepComplete({ examId, config }) {
             </div>
           )}
 
+          {/* Rubric weighting editor */}
+          <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, marginBottom: 20,
+            textAlign: "left", overflow: "hidden" }}>
+            <button
+              onClick={() => setShowWeights(s => !s)}
+              style={{ width: "100%", background: T.parchment, border: "none",
+                padding: "12px 16px", cursor: "pointer", display: "flex",
+                alignItems: "center", justifyContent: "space-between",
+                fontSize: 14, fontWeight: 700, color: T.navy, fontFamily: "Inter, sans-serif" }}>
+              <span>⚖ Adjust Rubric Weighting{isCustom ? " · customized" : ""}</span>
+              <span style={{ color: T.muted }}>{showWeights ? "▲" : "▼"}</span>
+            </button>
+            {showWeights && (
+              <div style={{ padding: "14px 16px", borderTop: `1px solid ${T.border}` }}>
+                <p style={{ fontSize: 12, color: T.inkLight, margin: "0 0 14px", lineHeight: 1.55 }}>
+                  Set how much each topic counts toward the final grade. Question counts stay fixed;
+                  this only changes scoring weight. Values normalize to 100%.
+                </p>
+                {weights.map((w, i) => {
+                  const pct = Math.round((w.weight / wTotal) * 100);
+                  return (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+                      <span style={{ flex: 1, fontSize: 13, color: T.ink }}>{w.label}</span>
+                      <input
+                        type="range" min="0" max="10" step="1" value={w.weight}
+                        onChange={e => setWeight(i, Number(e.target.value))}
+                        style={{ width: 130, accentColor: T.gold, cursor: "pointer" }}
+                      />
+                      <span style={{ width: 46, textAlign: "right", fontSize: 13, fontWeight: 700, color: T.navy }}>
+                        {pct}%
+                      </span>
+                    </div>
+                  );
+                })}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+                  marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
+                  <span style={{ fontSize: 11, color: T.muted }}>
+                    Applied to the exported rubric's Score Weight column.
+                  </span>
+                  <button
+                    onClick={resetWeights}
+                    disabled={!isCustom}
+                    style={{ background: "transparent", border: `1px solid ${T.border}`,
+                      borderRadius: 6, padding: "5px 12px", fontSize: 12, color: T.inkLight,
+                      cursor: isCustom ? "pointer" : "default", opacity: isCustom ? 1 : 0.5 }}>
+                    Reset to default
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
             <button className="btn-primary" onClick={handleShare}>
               {linkCopied ? "✓ Copied!" : "🔗 Share Exam Link"}
@@ -1715,7 +1797,7 @@ function StepComplete({ examId, config }) {
             <button className="btn-secondary" onClick={() => setShowPreview(true)}>
               👁 Preview as Student
             </button>
-            <button className="btn-secondary" onClick={() => exportRubric(chosen, config)}>
+            <button className="btn-secondary" onClick={() => exportRubric(chosen, config, weights)}>
               📄 Export Rubric
             </button>
           </div>
@@ -1935,18 +2017,18 @@ function ConceptGraph({ discipline, traversed }) {
         const active = traversed.includes(n.id);
         return (
           <g key={n.id}>
-            <circle cx={n.x} cy={n.y} r={34}
+            <circle cx={n.x} cy={n.y} r={38}
               fill={active ? T.navy : T.parchmentDark}
               stroke={active ? T.gold : T.border}
               strokeWidth={active ? 2.5 : 1.5}
               style={{ transition: "all 0.4s" }}
             />
             <text x={n.x} y={n.y - 3} textAnchor="middle" dominantBaseline="middle"
-              fontSize={11} fontWeight={700}
+              fontSize={15} fontWeight={700}
               fill={active ? T.goldLight : T.inkLight}
               style={{ transition: "fill 0.4s", userSelect: "none" }}>
               {n.label.split(" ").map((word, wi) => (
-                <tspan key={wi} x={n.x} dy={wi === 0 ? (n.label.includes(" ") ? -6 : 0) : 13}>{word}</tspan>
+                <tspan key={wi} x={n.x} dy={wi === 0 ? (n.label.includes(" ") ? -8 : 0) : 17}>{word}</tspan>
               ))}
             </text>
           </g>
@@ -2099,6 +2181,12 @@ function OralExam({ discipline, studentName, onBack }) {
   const scrollRef                   = useRef(null);
   const answered                    = turns.filter(t => t.role === "student").length;
 
+  // Latest evaluator turn — the single audio the consolidated controls act on.
+  let lastEvalIndex = -1;
+  for (let i = turns.length - 1; i >= 0; i--) { if (turns[i].role === "evaluator") { lastEvalIndex = i; break; } }
+  const lastEvalText  = lastEvalIndex >= 0 ? turns[lastEvalIndex].text : "";
+  const currentTts    = ttsStates[lastEvalIndex] || "idle";
+
   function scrollBottom() {
     setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, 80);
   }
@@ -2200,6 +2288,26 @@ function OralExam({ discipline, studentName, onBack }) {
     }
   }
 
+  // ── Consolidated Play / Pause acting on the latest evaluator response ──
+  function playCurrent() {
+    if (lastEvalIndex < 0) return;
+    const state = ttsStates[lastEvalIndex] || "idle";
+    if (state === "playing" || state === "loading") return;
+    if (state === "paused" && audioRef.current) {
+      audioRef.current.play();
+      setTtsStates(prev => ({ ...prev, [lastEvalIndex]: "playing" }));
+      return;
+    }
+    speakTurn(lastEvalIndex, lastEvalText); // idle → start (or replay)
+  }
+  function pauseCurrent() {
+    if (lastEvalIndex < 0) return;
+    if ((ttsStates[lastEvalIndex] || "idle") === "playing" && audioRef.current) {
+      audioRef.current.pause();
+      setTtsStates(prev => ({ ...prev, [lastEvalIndex]: "paused" }));
+    }
+  }
+
   // ── Graph traversal keyed to question progress ──
   function updateGraph(qNum) {
     const nodeIds = discipline.nodes.map(n => n.id);
@@ -2230,7 +2338,7 @@ function OralExam({ discipline, studentName, onBack }) {
       ? `You are an Epistemy oral examiner for ${discipline.title} at UC Berkeley Haas. The student was just asked: "${askedQ}". In 2 to 3 sentences, give a closing assessment of the whole exam: name one thing the student demonstrated well and one gap worth revisiting. Do not reveal full answers. End with "EXAM_COMPLETE".`
       : `You are an Epistemy oral examiner for ${discipline.title} at UC Berkeley Haas. The student was just asked: "${askedQ}". In ONE or at most TWO sentences, acknowledge specifically what was strong or thin in their reasoning. Do not reveal the answer and do not ask a new question, another question follows automatically.`;
 
-    let feedback;
+    let feedback = "";
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -2243,11 +2351,9 @@ function OralExam({ discipline, studentName, onBack }) {
         }),
       });
       const data = await res.json();
-      feedback = data.content?.find(b => b.type === "text")?.text || "Noted. Let's continue.";
+      feedback = (data.content?.find(b => b.type === "text")?.text || "").trim();
     } catch {
-      feedback = isLast
-        ? "You showed solid command of the core mechanics. The area to revisit is tying each model back to the cash flows and assumptions it depends on. Well done. EXAM_COMPLETE"
-        : "Reasonable start. Keep an eye on the assumption you leaned on most heavily.";
+      feedback = "";
     }
 
     const done = isLast || feedback.includes("EXAM_COMPLETE");
@@ -2259,10 +2365,13 @@ function OralExam({ discipline, studentName, onBack }) {
 
     let bubble;
     if (done) {
-      bubble = feedback;
+      // Closing turn: model summary when available, otherwise a single neutral close.
+      bubble = feedback || "That completes the exam. Your responses have been recorded, and your Epistemic Depth Score is shown on the right.";
     } else {
       const nextIdx = qIndex + 1;
-      bubble = `${feedback}\n\nQuestion ${nextIdx + 1}. ${bank[nextIdx].q}`;
+      const nextQ = `Question ${nextIdx + 1}. ${bank[nextIdx].q}`;
+      // Prefix the brief evaluation only when the model actually returned one.
+      bubble = feedback ? `${feedback}\n\n${nextQ}` : nextQ;
       setQIndex(nextIdx);
     }
 
@@ -2337,47 +2446,28 @@ function OralExam({ discipline, studentName, onBack }) {
           borderTop: "none", borderRadius: "0 0 12px 12px",
           height: 420, overflowY: "auto", padding: "20px 20px 0" }}>
 
-          {turns.map((turn, i) => {
-            const tState = ttsStates[i] || "idle";
-            return (
-              <div key={i} style={{ marginBottom: 16,
-                display: "flex", flexDirection: "column",
-                alignItems: turn.role === "student" ? "flex-end" : "flex-start" }}>
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-                  letterSpacing: "0.06em", marginBottom: 5,
-                  color: turn.role === "student" ? T.navyLight : discipline.accent }}>
-                  {turn.role === "student" ? studentName : "Epistemy Evaluator"}
-                </div>
-                <div style={{ maxWidth: "86%", position: "relative" }}>
-                  <div style={{
-                    background: turn.role === "student" ? T.navy : T.parchmentDark,
-                    border: turn.role === "student" ? "none" : `1px solid ${T.border}`,
-                    borderRadius: turn.role === "student" ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
-                    padding: turn.role === "evaluator" ? "11px 44px 11px 15px" : "11px 15px",
-                    fontSize: 14, lineHeight: 1.65, whiteSpace: "pre-wrap",
-                    color: turn.role === "student" ? "white" : T.navy,
-                  }}>
-                    {turn.text}
-                  </div>
-                  {turn.role === "evaluator" && (
-                    <button
-                      onClick={() => togglePlayPause(i, turn.text)}
-                      title={ttsTitle(tState)}
-                      style={{
-                        position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
-                        background: tState === "playing" ? discipline.accent : "rgba(0,0,0,0.06)",
-                        border: "none", borderRadius: "50%",
-                        width: 28, height: 28, cursor: tState === "loading" ? "default" : "pointer",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: 12, transition: "background 0.2s",
-                      }}>
-                      {ttsIcon(tState)}
-                    </button>
-                  )}
-                </div>
+          {turns.map((turn, i) => (
+            <div key={i} style={{ marginBottom: 16,
+              display: "flex", flexDirection: "column",
+              alignItems: turn.role === "student" ? "flex-end" : "flex-start" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+                letterSpacing: "0.06em", marginBottom: 5,
+                color: turn.role === "student" ? T.navyLight : discipline.accent }}>
+                {turn.role === "student" ? studentName : "Epistemy Evaluator"}
               </div>
-            );
-          })}
+              <div style={{
+                maxWidth: "86%",
+                background: turn.role === "student" ? T.navy : T.parchmentDark,
+                border: turn.role === "student" ? "none" : `1px solid ${T.border}`,
+                borderRadius: turn.role === "student" ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
+                padding: "11px 15px",
+                fontSize: 14, lineHeight: 1.65, whiteSpace: "pre-wrap",
+                color: turn.role === "student" ? "white" : T.navy,
+              }}>
+                {turn.text}
+              </div>
+            </div>
+          ))}
 
           {loading && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0 16px" }}>
@@ -2425,10 +2515,34 @@ function OralExam({ discipline, studentName, onBack }) {
                 resize: "none", outline: "none", boxSizing: "border-box",
                 marginBottom: 10, transition: "border-color 0.2s, background 0.2s" }}
             />
-            <div style={{ display: "flex", gap: 10, alignItems: "stretch" }}>
-              <button className="btn-primary" style={{ flex: 1 }}
-                onClick={handleSubmit} disabled={loading || (!draft.trim() && !interimText.trim())}>
-                {loading ? "Evaluating…" : "Submit Answer →"}
+            <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+              <button
+                onClick={playCurrent}
+                disabled={lastEvalIndex < 0 || currentTts === "playing"}
+                title="Play the evaluator's response"
+                style={{
+                  padding: "0 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+                  border: `1.5px solid ${T.navy}`,
+                  background: currentTts === "playing" ? T.navy : "transparent",
+                  color: currentTts === "playing" ? "white" : T.navy,
+                  cursor: lastEvalIndex < 0 || currentTts === "playing" ? "default" : "pointer",
+                  opacity: lastEvalIndex < 0 ? 0.4 : 1,
+                  display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+                }}>
+                {currentTts === "loading" ? "⏳" : "▶"} Play
+              </button>
+              <button
+                onClick={pauseCurrent}
+                disabled={currentTts !== "playing"}
+                title="Pause playback"
+                style={{
+                  padding: "0 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+                  border: `1.5px solid ${T.navy}`, background: "transparent", color: T.navy,
+                  cursor: currentTts === "playing" ? "pointer" : "default",
+                  opacity: currentTts === "playing" ? 1 : 0.4,
+                  display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+                }}>
+                ⏸ Pause
               </button>
               <button
                 onClick={toggleMic}
@@ -2443,19 +2557,35 @@ function OralExam({ discipline, studentName, onBack }) {
                 }}>
                 {listening ? "🔴" : "🎤"}
               </button>
+              <button className="btn-primary" style={{ flex: 1 }}
+                onClick={handleSubmit} disabled={loading || (!draft.trim() && !interimText.trim())}>
+                {loading ? "Evaluating…" : "Submit Answer →"}
+              </button>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
               {listening
                 ? <div style={{ fontSize: 12, color: discipline.accent, fontWeight: 600 }}>● Recording — click 🔴 to stop and commit</div>
-                : <div style={{ fontSize: 12, color: T.muted }}>🎤 Click mic to speak · 🔊 Evaluator responses play automatically</div>
+                : <div style={{ fontSize: 12, color: T.muted }}>▶ Play / ⏸ Pause the evaluator · 🎤 speak your answer · responses also play automatically</div>
               }
             </div>
           </div>
         )}
       </div>
 
-      {/* ── Right: EDS + Graph ── */}
+      {/* ── Right: EDS + Graph (behind the scenes) ── */}
       <div style={{ width: 300, flexShrink: 0, display: "flex", flexDirection: "column", gap: 16 }}>
+
+        {/* Behind-the-scenes label */}
+        <div style={{ border: `1px dashed ${T.gold}`, background: "#FBF6EA", borderRadius: 10,
+          padding: "9px 14px" }}>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.03em", color: T.navy,
+            display: "flex", alignItems: "center", gap: 6 }}>
+            <span>🔍</span> [ Behind the Scenes ]
+          </div>
+          <div style={{ fontSize: 11, color: T.inkLight, marginTop: 4, lineHeight: 1.5 }}>
+            Concept graph, coverage, and EDS scoring. Instructor-facing, hidden from the student during the exam.
+          </div>
+        </div>
 
         {/* EDS gauge card */}
         <div style={{ background: T.white, border: `1px solid ${T.border}`, borderRadius: 12,
