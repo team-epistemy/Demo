@@ -1386,391 +1386,27 @@ const EXAM_QUESTIONS = {
 const MAX_TURNS = 3; // max turns per question before moving on
 
 function StudentPreview({ exam, config, onClose }) {
-  const questions = EXAM_QUESTIONS[exam.bankKey] || EXAM_QUESTIONS[exam.id] || EXAM_QUESTIONS.balanced;
-
-  // currentQ = which question we're on
-  const [currentQ, setCurrentQ]     = useState(0);
-  // turns = array of { role: "student"|"evaluator", text: string } for this question
-  const [turns, setTurns]           = useState([]);
-  // draft = what the student is typing right now
-  const [draft, setDraft]           = useState("");
-  const [loading, setLoading]       = useState(false);
-  // questionDone = evaluator has signalled this Q is closed (max turns OR accepted)
-  const [questionDone, setQuestionDone] = useState(false);
-  // examDone = all questions exhausted
-  const [examDone, setExamDone]     = useState(false);
-  // per-question EDS deltas accumulate
-  const [edsScore, setEdsScore]     = useState(0);
-
-  const scrollRef = useRef(null);
-  const q = questions[currentQ];
-  // student turns only (excludes evaluator turns)
-  const studentTurnCount = turns.filter(t => t.role === "student").length;
-
-  // auto-scroll conversation to bottom
-  function scrollToBottom() {
-    setTimeout(() => {
-      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }, 80);
-  }
-
-  // Build the messages array for the API: full conversation history for this question
-  function buildMessages(newStudentText) {
-    // system message sets the examiner persona; passed separately
-    // Reconstruct the API message history from turns so far
-    const msgs = [];
-    // First student turn = the initial answer to the root question
-    // Subsequent turns = follow-up exchanges
-    let isFirst = true;
-    for (const t of turns) {
-      if (t.role === "student") {
-        if (isFirst) {
-          msgs.push({ role: "user", content: `Topic: ${q.topic}\n\nOpening question: ${q.q}\n\nStudent answer: ${t.text}` });
-          isFirst = false;
-        } else {
-          msgs.push({ role: "user", content: t.text });
-        }
-      } else {
-        msgs.push({ role: "assistant", content: t.text });
-      }
-    }
-    // Append the new student message
-    if (isFirst) {
-      msgs.push({ role: "user", content: `Topic: ${q.topic}\n\nOpening question: ${q.q}\n\nStudent answer: ${newStudentText}` });
-    } else {
-      msgs.push({ role: "user", content: newStudentText });
-    }
-    return msgs;
-  }
-
-  async function handleSubmit() {
-    if (!draft.trim() || loading) return;
-    const studentText = draft.trim();
-    setDraft("");
-
-    const priorTurns = turns;
-    const newTurns = [...turns, { role: "student", text: studentText }];
-    setTurns(newTurns);
-    setLoading(true);
-    scrollToBottom();
-
-    const attempt = newTurns.filter(t => t.role === "student").length; // answers to this question
-    const maxed = attempt >= MAX_TURNS;                                 // 3-turn cap
-
-    const system =
-      `You are an Epistemy oral examiner for MBA Finance Core at UC Berkeley Haas, running a Socratic oral exam. ` +
-      `The current exam question is: "${q.q}" (topic: ${q.topic}). ` +
-      `You scaffold: when an answer is incomplete, you do NOT give the answer away. Instead you ask ONE smaller guiding ` +
-      `sub-question about an intermediate concept or a single causal link, so the student can build toward the answer themselves. ` +
-      `First decide whether the student genuinely attempted to answer THIS question with relevant content. ` +
-      `Treat "I don't know", "not sure", "no idea", blank replies, gibberish, off-topic answers, refusals, or asking to skip as NOT answered. ` +
-      `Assess the student's most recent answer in the running exchange for THIS question. "adequate" may be true only if "answered" is true. ` +
-      `Respond ONLY with minified JSON, no prose and no code fences: ` +
-      `{"answered": true or false, "adequate": true or false, "feedback": "at most one short sentence noting what was strong or thin, used when moving on", ` +
-      `"probe": "if not adequate, ONE short guiding sub-question toward an intermediate step; empty string if adequate"}`;
-
-    let ctx = `Exam question: ${q.q}\n\n`;
-    if (priorTurns.length) {
-      ctx += "Exchange so far on this question:\n";
-      for (const t of priorTurns) {
-        ctx += (t.role === "evaluator" ? `Examiner: ${t.text}` : `Student: ${t.text}`) + "\n";
-      }
-      ctx += "\n";
-    }
-    ctx += `Student's latest answer: ${studentText}`;
-
-    let adequate = true, feedback = "", probe = "", answered = true, modelOk = false;
-    try {
-      const data = await callModel({
-        model: "claude-sonnet-4-6",
-        max_tokens: 500,
-        system,
-        messages: [{ role: "user", content: ctx }],
-      });
-      let txt = (data.content?.find(b => b.type === "text")?.text || "").trim().replace(/```json|```/g, "").trim();
-      const s = txt.indexOf("{"), e = txt.lastIndexOf("}");
-      const parsed = JSON.parse(txt.slice(s, e + 1));
-      adequate = !!parsed.adequate;
-      answered = ("answered" in parsed) ? !!parsed.answered : answerQuality(studentText) > 0;
-      feedback = (parsed.feedback || "").trim();
-      probe = (parsed.probe || "").trim();
-      modelOk = true;
-    } catch {
-      // Model unavailable: move on rather than repeat a canned probe.
-      adequate = true; feedback = ""; probe = ""; modelOk = false;
-    }
-
-    // EDS reflects the evaluation, not a blind increment.
-    let edsDelta;
-    if (modelOk) {
-      if (!answered)     edsDelta = 0;
-      else if (adequate) edsDelta = 8 + Math.floor(Math.random() * 6);
-      else if (probe)    edsDelta = 3;
-      else               edsDelta = 0;
-    } else {
-      edsDelta = Math.round(answerQuality(studentText) * 12); // 0 for non-answers
-    }
-
-    const close = adequate || maxed || !probe;
-    if (close) {
-      setEdsScore(prev => Math.min(99, prev + edsDelta));
-      const bubble = feedback || "Good work on this question. Moving on.";
-      setTurns(prev => [...prev, { role: "evaluator", text: bubble }]);
-      setQuestionDone(true);
-    } else {
-      setEdsScore(prev => Math.min(99, prev + edsDelta));
-      const bubble = feedback ? `${feedback}\n\n${probe}` : probe;
-      setTurns(prev => [...prev, { role: "evaluator", text: bubble }]);
-    }
-
-    setLoading(false);
-    scrollToBottom();
-  }
-
-  function handleNextQuestion() {
-    if (currentQ < questions.length - 1) {
-      setCurrentQ(q => q + 1);
-      setTurns([]);
-      setDraft("");
-      setQuestionDone(false);
-      scrollToBottom();
-    } else {
-      setExamDone(true);
-    }
-  }
-
-  // progress: fraction of questions fully done
-  const questionProgress = (currentQ / questions.length) + (questionDone ? 1 / questions.length : 0);
-
+  const finance = DISCIPLINES.find(d => d.id === "finance") || DISCIPLINES[0];
   return (
-    <div style={{
-      position: "fixed", inset: 0, background: "rgba(27,42,74,0.82)", backdropFilter: "blur(4px)",
-      zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
-    }}>
-      <div style={{
-        background: T.white, borderRadius: 16, width: "100%", maxWidth: 700,
-        maxHeight: "92vh", display: "flex", flexDirection: "column",
-        boxShadow: "0 28px 80px rgba(0,0,0,0.35)",
-      }}>
-
-        {/* ── Modal header ── */}
-        <div style={{ background: T.navy, padding: "14px 22px", borderRadius: "16px 16px 0 0",
-          display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(20,20,30,0.6)", zIndex:200,
+      display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+      <div onClick={e=>e.stopPropagation()} style={{ background:T.parchment, borderRadius:14, width:"96vw", maxWidth:1220,
+        height:"92vh", overflowY:"auto", padding:"0 20px 26px", border:`1px solid ${T.border}`, position:"relative" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14,
+          position:"sticky", top:0, background:T.parchment, padding:"16px 0 10px", zIndex:5 }}>
           <div>
-            <div style={{ color: T.goldLight, fontSize: 11, fontWeight: 700, letterSpacing: "0.08em",
-              textTransform: "uppercase", marginBottom: 2 }}>Student Preview — {exam.title}</div>
-            <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 12 }}>
-              MBA Finance Core · Prof. Matteo Benetton · Haas
-            </div>
+            <div style={{ fontFamily:"DM Serif Display, serif", fontSize:20, color:T.navy }}>Preview as Student</div>
+            <div style={{ fontSize:12, color:T.muted }}>Exactly what the student sees, including navigation and the behind-the-scenes panel.</div>
           </div>
-          <button onClick={onClose} style={{ background: "rgba(255,255,255,0.1)", border: "none",
-            color: "white", borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13 }}>
-            ✕ Close
-          </button>
+          <button onClick={onClose} style={{ background:T.navy, color:"white", border:"none", borderRadius:8,
+            padding:"7px 16px", cursor:"pointer", fontSize:13, fontWeight:600 }}>Close ×</button>
         </div>
-
-        {/* ── Progress bar + meta ── */}
-        <div style={{ padding: "14px 22px 0", flexShrink: 0, borderBottom: `1px solid ${T.border}`, paddingBottom: 14 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: T.navy }}>
-              Question {currentQ + 1} <span style={{ color: T.muted, fontWeight: 400 }}>of {questions.length}</span>
-              <span style={{ marginLeft: 14, color: T.muted, fontWeight: 400, fontSize: 12 }}>{q?.topic}</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              {/* Behind-the-scenes tag */}
-              <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.04em", color: T.gold,
-                border: `1px dashed ${T.gold}`, borderRadius: 6, padding: "2px 6px",
-                textTransform: "uppercase", whiteSpace: "nowrap" }}>
-                🔍 Behind the Scenes
-              </span>
-              {/* Turn counter */}
-              <div style={{ fontSize: 12, color: T.muted }}>
-                Turn <span style={{ fontWeight: 700, color: T.inkLight }}>{studentTurnCount}</span>
-                <span style={{ color: T.border }}>/</span>{MAX_TURNS}
-              </div>
-              {/* EDS chip */}
-              <div style={{ background: T.navy, color: T.goldLight, borderRadius: 20,
-                padding: "3px 12px", fontSize: 13, fontWeight: 700 }}>
-                EDS {edsScore > 0 ? edsScore : "—"}
-              </div>
-            </div>
-          </div>
-          {/* Question progress bar */}
-          <div style={{ background: T.border, borderRadius: 4, height: 5, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${questionProgress * 100}%`,
-              background: `linear-gradient(90deg, ${T.gold}, ${T.goldLight})`,
-              borderRadius: 4, transition: "width 0.5s ease" }} />
-          </div>
-          {/* Turn depth dots */}
-          <div style={{ display: "flex", gap: 5, marginTop: 8 }}>
-            {Array.from({ length: MAX_TURNS }).map((_, i) => (
-              <div key={i} style={{
-                height: 5, flex: 1, borderRadius: 3,
-                background: i < studentTurnCount
-                  ? (questionDone ? T.success : T.gold)
-                  : T.border,
-                transition: "background 0.3s",
-              }} />
-            ))}
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10,
-            color: T.muted, marginTop: 3 }}>
-            <span>Initial answer</span><span>Max depth</span>
-          </div>
-        </div>
-
-        {/* ── Conversation scroll area ── */}
-        <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "20px 22px" }}>
-
-          {examDone ? (
-            <div style={{ textAlign: "center", padding: "32px 0" }}>
-              <div style={{ fontSize: 48, marginBottom: 16 }}>🎓</div>
-              <div style={{ fontFamily: "DM Serif Display, serif", fontSize: 24, color: T.navy, marginBottom: 10 }}>
-                Exam complete
-              </div>
-              <div style={{ fontSize: 14, color: T.inkLight, marginBottom: 24, lineHeight: 1.7 }}>
-                You answered {questions.length} questions across {turns.filter(t=>t.role==="student").length + studentTurnCount} total exchanges.
-                Your EDS score of <strong>{edsScore}</strong> will be recorded in the instructor dashboard.
-              </div>
-              <div style={{ background: T.parchmentDark, border: `1px solid ${T.border}`,
-                borderRadius: 10, padding: "16px 20px", textAlign: "left", marginBottom: 20 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase",
-                  letterSpacing: "0.06em", color: T.muted, marginBottom: 10 }}>Session Summary</div>
-                {questions.map((qq, i) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "space-between",
-                    fontSize: 13, padding: "6px 0", borderBottom: i < questions.length-1 ? `1px solid ${T.border}` : "none",
-                    color: T.inkLight }}>
-                    <span>{qq.topic}</span>
-                    <span style={{ color: T.success, fontWeight: 600 }}>✓ Completed</span>
-                  </div>
-                ))}
-              </div>
-              <button className="btn-secondary" onClick={onClose}>Close Preview</button>
-            </div>
-          ) : (
-            <>
-              {/* Root question bubble */}
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-                  letterSpacing: "0.07em", color: T.gold, marginBottom: 8 }}>
-                  Epistemy Evaluator · Opening Question
-                </div>
-                <div style={{ background: T.parchmentDark, border: `1px solid ${T.border}`,
-                  borderRadius: "12px 12px 12px 4px", padding: "16px 18px",
-                  fontSize: 15, color: T.navy, lineHeight: 1.65,
-                  fontFamily: "DM Serif Display, serif" }}>
-                  {q?.q}
-                </div>
-              </div>
-
-              {/* Turn history */}
-              {turns.map((turn, i) => (
-                <div key={i} style={{ marginBottom: 14,
-                  display: "flex", flexDirection: "column",
-                  alignItems: turn.role === "student" ? "flex-end" : "flex-start" }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-                    letterSpacing: "0.06em", marginBottom: 5,
-                    color: turn.role === "student" ? T.navyLight : T.gold }}>
-                    {turn.role === "student" ? "You" : "Epistemy Evaluator"}
-                  </div>
-                  <div style={{
-                    maxWidth: "88%",
-                    background: turn.role === "student" ? T.navy : "#F0F4FF",
-                    border: turn.role === "student" ? "none" : "1px solid #C5D3F5",
-                    borderRadius: turn.role === "student"
-                      ? "12px 12px 4px 12px"
-                      : "12px 12px 12px 4px",
-                    padding: "12px 16px",
-                    fontSize: 14,
-                    color: turn.role === "student" ? "white" : T.navy,
-                    lineHeight: 1.65,
-                  }}>
-                    {turn.text}
-                  </div>
-                </div>
-              ))}
-
-              {/* Loading indicator */}
-              {loading && (
-                <div style={{ display: "flex", alignItems: "center", gap: 10,
-                  marginBottom: 14, padding: "10px 0" }}>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    {[0,1,2].map(i => (
-                      <div key={i} style={{ width: 7, height: 7, borderRadius: "50%",
-                        background: T.gold, animation: `bounce 1s ease-in-out ${i*0.15}s infinite` }} />
-                    ))}
-                  </div>
-                  <span style={{ fontSize: 12, color: T.muted }}>Evaluating…</span>
-                </div>
-              )}
-
-              {/* Question done — show Next button */}
-              {questionDone && !loading && (
-                <div style={{ textAlign: "center", padding: "16px 0 4px" }}>
-                  <div style={{ fontSize: 12, color: T.success, fontWeight: 600, marginBottom: 12 }}>
-                    ✓ Question {currentQ + 1} complete
-                  </div>
-                  <button className="btn-primary" onClick={handleNextQuestion}>
-                    {currentQ < questions.length - 1 ? `Next Question (${currentQ + 2}/${questions.length}) →` : "Finish Exam →"}
-                  </button>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* ── Input area (hidden when Q done or exam done) ── */}
-        {!questionDone && !examDone && (
-          <div style={{ padding: "14px 22px 18px", borderTop: `1px solid ${T.border}`, flexShrink: 0 }}>
-            <textarea
-              value={draft}
-              onChange={e => setDraft(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSubmit(); }}
-              placeholder={turns.length === 0
-                ? "Type your initial answer… (⌘↵ to submit)"
-                : "Respond to the follow-up… (⌘↵ to submit)"}
-              style={{ width: "100%", minHeight: 90, maxHeight: 160, padding: "11px 14px",
-                border: `1px solid ${T.border}`, borderRadius: 10,
-                fontFamily: "Inter, sans-serif", fontSize: 14, color: T.ink,
-                background: T.parchment, resize: "none", outline: "none",
-                boxSizing: "border-box", marginBottom: 10, lineHeight: 1.55 }}
-            />
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <button className="btn-primary" style={{ flex: 1 }}
-                onClick={handleSubmit} disabled={loading || !draft.trim()}>
-                {loading ? "Evaluating…" : turns.length === 0 ? "Submit Answer →" : "Respond →"}
-              </button>
-              <button className="btn-secondary" style={{ padding: "11px 16px" }} title="Speak answer (mic)">🎤</button>
-              {studentTurnCount > 0 && (
-                <button
-                  onClick={() => { setQuestionDone(true); }}
-                  style={{ background: "none", border: "none", fontSize: 12, color: T.muted,
-                    cursor: "pointer", textDecoration: "underline", padding: "11px 4px" }}
-                  title="Move to next question without exhausting all turns">
-                  Skip →
-                </button>
-              )}
-            </div>
-            {studentTurnCount > 0 && (
-              <div style={{ fontSize: 11, color: T.muted, marginTop: 6, textAlign: "center" }}>
-                {MAX_TURNS - studentTurnCount} probe turn{MAX_TURNS - studentTurnCount !== 1 ? "s" : ""} remaining on this question
-              </div>
-            )}
-          </div>
-        )}
+        <OralExam discipline={finance} studentName="Preview Student" onBack={onClose} previewMode />
       </div>
-
-      <style>{`
-        @keyframes bounce {
-          0%, 100% { transform: translateY(0); opacity: 0.5; }
-          50% { transform: translateY(-5px); opacity: 1; }
-        }
-      `}</style>
     </div>
   );
 }
 
-// ── Rubric export ──
 function exportRubric(chosen, config, dist, qScores) {
   const rows = (dist && dist.length)
     ? dist
@@ -1858,17 +1494,6 @@ function exportRubric(chosen, config, dist, qScores) {
       <tbody>${distHtml}</tbody>
     </table>
     ${scoreSection}
-
-    <h2>Epistemic Depth Score (EDS) Model</h2>
-    <div class="eds-box">
-      EDS measures the <strong>depth and structure of causal understanding</strong>, not surface recall. 
-      Each student response is evaluated against the concept graph derived from course material, scoring 
-      how far the student can traverse prerequisite chains and explain causal relationships.
-    </div>
-    <div class="dimension-row"><div class="dim-label">Graph Hop Depth</div><div class="dim-weight">40%</div><div class="dim-bar-wrap"><div class="dim-bar" style="width:40%"></div></div></div>
-    <div class="dimension-row"><div class="dim-label">Prerequisite Chain Count</div><div class="dim-weight">25%</div><div class="dim-bar-wrap"><div class="dim-bar" style="width:25%"></div></div></div>
-    <div class="dimension-row"><div class="dim-label">Abstraction Level</div><div class="dim-weight">20%</div><div class="dim-bar-wrap"><div class="dim-bar" style="width:20%"></div></div></div>
-    <div class="dimension-row"><div class="dim-label">LLM Resistance Score</div><div class="dim-weight">15%</div><div class="dim-bar-wrap"><div class="dim-bar" style="width:15%"></div></div></div>
 
     <h2>EDS Score Bands</h2>
     <table>
@@ -2489,12 +2114,8 @@ function DisciplineLanding({ onSelect }) {
 }
 
 // ── Oral Exam Engine ──
-function OralExam({ discipline, studentName, onBack }) {
-  // ── Resolve the question bank ──
-  // Finance follows the professor's selected exam variant when one exists;
-  // otherwise a default topic-focused set. Other disciplines use their default.
-  // Finance uses the professor's assembled set (derived from selected topics,
-  // counts, and variant) when present; otherwise a default topic-focused bank.
+function OralExam({ discipline, studentName, onBack, previewMode }) {
+  // ── Resolve bank + context ──
   const derived = (discipline.id === "finance" && ExamStore.questions && ExamStore.questions.length)
     ? ExamStore.questions : null;
   const bank =
@@ -2508,195 +2129,124 @@ function OralExam({ discipline, studentName, onBack }) {
   const sourceLabel = usingProfessorSet
     ? `Prof. Benetton · ${ExamStore.trackLabel || "selected exam"}`
     : "Default topic set";
-
-  const openingText = `${examContext}\n\nQuestion 1. ${bank[0].q}`;
-
-  // ── qIndex = the question currently being answered (0-based) ──
-  const [qIndex, setQIndex]         = useState(0);
-  const [turns, setTurns]           = useState(() => [{ role: "evaluator", text: openingText }]);
-  const [draft, setDraft]           = useState("");
-  const [loading, setLoading]       = useState(false);
-  const [edsScore, setEdsScore]     = useState(0);
-  const [traversed, setTraversed]   = useState([]);
-  const [log, setLog]               = useState([]);
-  const [examDone, setExamDone]     = useState(false);
-
-  // ── Socratic scaffolding: up to 3 turns per question ──
   const MAX_Q_TURNS = 3;
-  const [qAttempts, setQAttempts]   = useState(0);   // answers given to the current question
-  const [qHistory, setQHistory]     = useState([]);  // {role:"answer"|"probe"} exchange for current question
 
-  // ── STT state ──
+  const openingFor = (i) => i === 0
+    ? `${examContext}\n\nQuestion 1. ${bank[0].q}`
+    : `Question ${i + 1}. ${bank[i].q}`;
+
+  const [current, setCurrent]   = useState(0);
+  const [qData, setQData]       = useState(() => bank.map((qq, i) => ({
+    turns: [{ role: "evaluator", text: openingFor(i) }],
+    attempts: 0, attempted: false, done: false, score: 0, visited: i === 0, history: [],
+  })));
+  const [draft, setDraft]       = useState("");
+  const [loading, setLoading]   = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [graphView, setGraphView] = useState("questions");
+
   const [listening, setListening]   = useState(false);
   const [interimText, setInterimText] = useState("");
-  const recognitionRef              = useRef(null);
+  const recognitionRef = useRef(null);
+  const [ttsState, setTtsState] = useState("idle");
+  const audioRef = useRef(null);
+  const scrollRef = useRef(null);
 
-  // ── TTS state ──
-  const [ttsStates, setTtsStates]   = useState({});
-  const audioRef                    = useRef(null);
-  const currentTurnRef              = useRef(null);
+  const cur = qData[current];
+  const curLatestEval = (() => {
+    for (let i = cur.turns.length - 1; i >= 0; i--) if (cur.turns[i].role === "evaluator") return cur.turns[i].text;
+    return "";
+  })();
 
-  const scrollRef                   = useRef(null);
-  const answered                    = turns.filter(t => t.role === "student").length;
+  const attemptedCount = qData.filter(q => q.attempted).length;
+  const respondedCount = qData.filter(q => q.score > 0).length;
+  const visitedCount   = qData.filter(q => q.visited).length;
+  const edsScore = Math.min(99, Math.round(qData.reduce((s, q) => s + q.score, 0)));
 
-  // Latest evaluator turn — the single audio the consolidated controls act on.
-  let lastEvalIndex = -1;
-  for (let i = turns.length - 1; i >= 0; i--) { if (turns[i].role === "evaluator") { lastEvalIndex = i; break; } }
-  const lastEvalText  = lastEvalIndex >= 0 ? turns[lastEvalIndex].text : "";
-  const currentTts    = ttsStates[lastEvalIndex] || "idle";
+  function scrollBottom(){ setTimeout(()=>{ if(scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, 60); }
 
-  function scrollBottom() {
-    setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, 80);
+  // ── Graph traversal for the two views ──
+  function nodeIdsFor(count){
+    const ids = discipline.nodes.map(n => n.id);
+    const k = Math.min(ids.length, Math.ceil((count / Math.max(N,1)) * ids.length));
+    return ids.slice(0, k);
   }
+  const questionsTraversed = nodeIdsFor(visitedCount);
+  const responsesTraversed = nodeIdsFor(respondedCount);
+  const shownTraversed = graphView === "questions" ? questionsTraversed : responsesTraversed;
+  const shownCount = shownTraversed.length;
 
-  // Auto-play the opening context + first question on mount
-  useEffect(() => {
-    const t = setTimeout(() => speakTurn(0, openingText), 450);
-    return () => clearTimeout(t);
+  // ── TTS ──
+  async function speak(text){
+    if (audioRef.current){ audioRef.current.pause(); audioRef.current = null; }
+    setTtsState("loading");
+    try{
+      const res = await fetch("/api/speak", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ text: cleanForSpeech(text) }) });
+      if(!res.ok) throw new Error("tts");
+      const ctype = res.headers.get("content-type") || "";
+      if(!ctype.includes("audio")) throw new Error("non-audio");
+      const url = URL.createObjectURL(await res.blob());
+      const a = new Audio(url); audioRef.current = a;
+      a.onended = ()=>{ setTtsState("idle"); URL.revokeObjectURL(url); };
+      a.onerror = ()=> setTtsState("idle");
+      await a.play(); setTtsState("playing");
+    }catch{ setTtsState("idle"); }
+  }
+  function playCurrent(){
+    if(ttsState==="playing"||ttsState==="loading") return;
+    if(ttsState==="paused" && audioRef.current){ audioRef.current.play(); setTtsState("playing"); return; }
+    if(curLatestEval) speak(curLatestEval);
+  }
+  function pauseCurrent(){ if(ttsState==="playing" && audioRef.current){ audioRef.current.pause(); setTtsState("paused"); } }
+
+  useEffect(()=>{
+    if(submitted) return;
+    if(audioRef.current){ audioRef.current.pause(); audioRef.current=null; }
+    setTtsState("idle");
+    const t = setTimeout(()=>{ if(curLatestEval) speak(curLatestEval); }, 350);
+    return ()=>clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [current, submitted]);
 
   // ── STT ──
-  function toggleMic() {
-    if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-      alert("Speech recognition not available in this browser — please use Chrome.");
-      return;
-    }
-    if (listening) {
-      recognitionRef.current?.stop();
-      return;
-    }
+  function toggleMic(){
+    if(!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)){ alert("Speech recognition not available — please use Chrome."); return; }
+    if(listening){ recognitionRef.current?.stop(); return; }
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const rec = new SR();
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = "en-US";
-
-    rec.onstart = () => setListening(true);
-    rec.onresult = e => {
-      let finalSoFar = "";
-      let interim = "";
-      for (const result of e.results) {
-        if (result.isFinal) finalSoFar += result[0].transcript + " ";
-        else interim += result[0].transcript;
-      }
-      if (finalSoFar) setDraft(prev => (prev + " " + finalSoFar).trim());
-      setInterimText(interim);
-    };
-    rec.onend = () => {
-      setListening(false);
-      setInterimText(prev => {
-        if (prev.trim()) setDraft(d => (d + " " + prev).trim());
-        return "";
-      });
-    };
-    rec.onerror = () => { setListening(false); setInterimText(""); };
-    rec.start();
-    recognitionRef.current = rec;
+    const rec = new SR(); rec.continuous=true; rec.interimResults=true; rec.lang="en-US";
+    rec.onstart=()=>setListening(true);
+    rec.onresult=e=>{ let fin="",int=""; for(let i=e.resultIndex;i<e.results.length;i++){ const r=e.results[i]; if(r.isFinal) fin+=r[0].transcript+" "; else int+=r[0].transcript; } if(fin) setDraft(p=>(p+" "+fin).trim()); setInterimText(int); };
+    rec.onend=()=>{ setListening(false); setInterimText(p=>{ if(p.trim()) setDraft(d=>(d+" "+p).trim()); return ""; }); };
+    rec.onerror=()=>{ setListening(false); setInterimText(""); };
+    rec.start(); recognitionRef.current=rec;
   }
 
-  // ── TTS via /api/speak (ElevenLabs proxy) ──
-  async function speakTurn(turnIndex, text) {
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-    if (currentTurnRef.current !== null && currentTurnRef.current !== turnIndex) {
-      setTtsStates(prev => ({ ...prev, [currentTurnRef.current]: "idle" }));
-    }
-    currentTurnRef.current = turnIndex;
-    setTtsStates(prev => ({ ...prev, [turnIndex]: "loading" }));
-    try {
-      const res = await fetch("/api/speak", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: cleanForSpeech(text) }),
-      });
-      if (!res.ok) throw new Error(`TTS error ${res.status}`);
-      const ctype = res.headers.get("content-type") || "";
-      if (!ctype.includes("audio")) throw new Error("TTS returned non-audio response");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audioRef.current = audio;
-      audio.onended = () => {
-        setTtsStates(prev => ({ ...prev, [turnIndex]: "idle" }));
-        URL.revokeObjectURL(url);
-        currentTurnRef.current = null;
-      };
-      audio.onerror = () => {
-        setTtsStates(prev => ({ ...prev, [turnIndex]: "idle" }));
-        currentTurnRef.current = null;
-      };
-      await audio.play();
-      setTtsStates(prev => ({ ...prev, [turnIndex]: "playing" }));
-    } catch {
-      setTtsStates(prev => ({ ...prev, [turnIndex]: "idle" }));
-      currentTurnRef.current = null;
-    }
+  // ── Navigation ──
+  function goTo(i){
+    if(i<0 || i>=N || i===current) return;
+    if(listening){ recognitionRef.current?.stop(); setListening(false); }
+    setDraft(""); setInterimText("");
+    setQData(prev=>prev.map((q,idx)=> idx===i && !q.visited ? {...q, visited:true} : q));
+    setCurrent(i);
   }
+  const nextIdx = current < N-1 ? current+1 : null;
+  const prevIdx = current > 0 ? current-1 : null;
 
-  function togglePlayPause(turnIndex, text) {
-    const state = ttsStates[turnIndex] || "idle";
-    if (state === "idle") { speakTurn(turnIndex, text); return; }
-    if (state === "loading") return;
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (state === "playing") {
-      audio.pause();
-      setTtsStates(prev => ({ ...prev, [turnIndex]: "paused" }));
-    } else if (state === "paused") {
-      audio.play();
-      setTtsStates(prev => ({ ...prev, [turnIndex]: "playing" }));
-    }
-  }
-
-  // ── Consolidated Play / Pause acting on the latest evaluator response ──
-  function playCurrent() {
-    if (lastEvalIndex < 0) return;
-    const state = ttsStates[lastEvalIndex] || "idle";
-    if (state === "playing" || state === "loading") return;
-    if (state === "paused" && audioRef.current) {
-      audioRef.current.play();
-      setTtsStates(prev => ({ ...prev, [lastEvalIndex]: "playing" }));
-      return;
-    }
-    speakTurn(lastEvalIndex, lastEvalText); // idle → start (or replay)
-  }
-  function pauseCurrent() {
-    if (lastEvalIndex < 0) return;
-    if ((ttsStates[lastEvalIndex] || "idle") === "playing" && audioRef.current) {
-      audioRef.current.pause();
-      setTtsStates(prev => ({ ...prev, [lastEvalIndex]: "paused" }));
-    }
-  }
-
-  // ── Graph traversal keyed to question progress ──
-  function updateGraph(qNum) {
-    const nodeIds = discipline.nodes.map(n => n.id);
-    const count = Math.min(Math.ceil(qNum * nodeIds.length / N) + 1, nodeIds.length);
-    setTraversed(nodeIds.slice(0, count));
-    if (count > 0) setLog(prev => [...prev, `→ ${discipline.nodes[count - 1]?.label}`]);
-  }
-
-  // ── Submit an answer to the current bank question ──
-  async function handleSubmit() {
-    if (!draft.trim() || loading) return;
-    if (listening) { recognitionRef.current?.stop(); setListening(false); setInterimText(""); }
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-
+  // ── Answer the current question (Socratic scaffolding, up to 3 turns) ──
+  async function handleAnswer(){
+    if(!draft.trim() || loading) return;
+    if(listening){ recognitionRef.current?.stop(); setListening(false); setInterimText(""); }
+    if(audioRef.current){ audioRef.current.pause(); audioRef.current=null; }
     const studentText = draft.trim();
-    const askedQ = bank[qIndex].q;
-    setDraft("");
-    setInterimText("");
-    const newTurns = [...turns, { role: "student", text: studentText }];
-    setTurns(newTurns);
-    setLoading(true);
-    scrollBottom();
+    const askedQ = bank[current].q;
+    const history = cur.history;
+    setDraft(""); setInterimText("");
+    setQData(prev=>prev.map((q,idx)=> idx===current ? {...q, turns:[...q.turns,{role:"student",text:studentText}], attempted:true } : q));
+    setLoading(true); scrollBottom();
 
-    const attempt = qAttempts + 1;                 // this answer's attempt number for the current question
-    const maxed = attempt >= MAX_Q_TURNS;          // reached the 3-turn cap
-    const isLastQ = qIndex >= N - 1;
-    const evalTurnIndex = newTurns.length;
+    const attempt = cur.attempts + 1;
+    const maxed = attempt >= MAX_Q_TURNS;
 
-    // Assess the answer against the current question and decide: move on, or scaffold with a smaller step.
     const system =
       `You are an Epistemy oral examiner for ${discipline.title} at UC Berkeley Haas, running a Socratic oral exam. ` +
       `The current exam question is: "${askedQ}". ` +
@@ -2710,359 +2260,267 @@ function OralExam({ discipline, studentName, onBack }) {
       `"probe": "if not adequate, ONE short guiding sub-question toward an intermediate step; empty string if adequate"}`;
 
     let ctx = `Exam question: ${askedQ}\n\n`;
-    if (qHistory.length) {
-      ctx += "Scaffolding so far on this question:\n";
-      for (const h of qHistory) {
-        ctx += (h.role === "probe" ? `Examiner sub-question: ${h.text}` : `Student: ${h.text}`) + "\n";
-      }
-      ctx += "\n";
-    }
+    if(history.length){ ctx += "Scaffolding so far on this question:\n"; for(const h of history){ ctx += (h.role==="probe"?`Examiner sub-question: ${h.text}`:`Student: ${h.text}`)+"\n"; } ctx+="\n"; }
     ctx += `Student's latest answer: ${studentText}`;
 
-    let adequate = true, feedback = "", probe = "", answered = true, modelOk = false;
-    try {
-      const data = await callModel({
-        model: "claude-sonnet-4-6",
-        max_tokens: 500,
-        system,
-        messages: [{ role: "user", content: ctx }],
-      });
-      let txt = (data.content?.find(b => b.type === "text")?.text || "").trim().replace(/```json|```/g, "").trim();
-      const s = txt.indexOf("{"), e = txt.lastIndexOf("}");
-      const parsed = JSON.parse(txt.slice(s, e + 1));
-      adequate = !!parsed.adequate;
-      answered = ("answered" in parsed) ? !!parsed.answered : answerQuality(studentText) > 0;
-      feedback = (parsed.feedback || "").trim();
-      probe = (parsed.probe || "").trim();
-      modelOk = true;
-    } catch {
-      // Model unavailable (no server route on the deployment): fall back to advancing,
-      // but score from a local heuristic so non-answers do not raise EDS.
-      const qual = answerQuality(studentText);
-      adequate = true; feedback = ""; probe = "";
-      modelOk = false;
-      if (qual === 0) { /* clear non-answer: no credit below */ }
-    }
+    let answered=true, adequate=true, feedback="", probe="", modelOk=false;
+    try{
+      const data = await callModel({ model:"claude-sonnet-4-6", max_tokens:500, system, messages:[{role:"user",content:ctx}] });
+      let txt=(data.content?.find(b=>b.type==="text")?.text||"").trim().replace(/```json|```/g,"").trim();
+      const s=txt.indexOf("{"), e=txt.lastIndexOf("}"); const parsed=JSON.parse(txt.slice(s,e+1));
+      adequate=!!parsed.adequate; answered=("answered"in parsed)?!!parsed.answered:answerQuality(studentText)>0;
+      feedback=(parsed.feedback||"").trim(); probe=(parsed.probe||"").trim(); modelOk=true;
+    }catch{ answered=answerQuality(studentText)>0; adequate=true; feedback=""; probe=""; modelOk=false; }
 
-    // EDS reflects the evaluation, not a blind increment.
     let edsDelta;
-    if (modelOk) {
-      if (!answered)     edsDelta = 0;                                // no genuine attempt → EDS unchanged
-      else if (adequate) edsDelta = 8 + Math.floor(Math.random() * 6);// solid answer
-      else if (probe)    edsDelta = 3;                                // genuine partial attempt
-      else               edsDelta = 0;
-    } else {
-      edsDelta = Math.round(answerQuality(studentText) * 12);         // 0 for non-answers
-    }
-    const earned = edsDelta > 0;
+    if(modelOk){ if(!answered) edsDelta=0; else if(adequate) edsDelta=8+Math.floor(Math.random()*6); else if(probe) edsDelta=3; else edsDelta=0; }
+    else edsDelta=Math.round(answerQuality(studentText)*12);
 
-    // Advance if the answer is adequate, the turn cap is hit, or there is no probe to give.
     const advance = adequate || maxed || !probe;
+    const bubble = advance ? (feedback || "Answer recorded.") : (feedback ? `${feedback}\n\n${probe}` : probe);
 
-    let bubble, done = false;
-    if (advance) {
-      setEdsScore(prev => Math.min(99, prev + edsDelta));
-      if (earned) updateGraph(qIndex + 1);
-      setQAttempts(0);
-      setQHistory([]);
-      if (isLastQ) {
-        done = true;
-        bubble = (feedback ? feedback + " " : "") +
-          "That completes the exam. Your responses have been recorded, and your Epistemic Depth Score is shown on the right.";
-      } else {
-        const nextIdx = qIndex + 1;
-        const nextQ = `Question ${nextIdx + 1}. ${bank[nextIdx].q}`;
-        bubble = feedback ? `${feedback}\n\n${nextQ}` : nextQ;
-        setQIndex(nextIdx);
-      }
-    } else {
-      // Scaffold: pose a smaller sub-question and stay on the same question.
-      setEdsScore(prev => Math.min(99, prev + edsDelta));
-      setQAttempts(attempt);
-      setQHistory([...qHistory, { role: "answer", text: studentText }, { role: "probe", text: probe }]);
-      bubble = feedback ? `${feedback}\n\n${probe}` : probe;
-    }
-
-    setTurns(prev => {
-      const updated = [...prev, { role: "evaluator", text: bubble }];
-      setTimeout(() => speakTurn(evalTurnIndex, bubble), 300);
-      return updated;
-    });
-    if (done) setExamDone(true);
-
+    setQData(prev=>prev.map((q,idx)=>{
+      if(idx!==current) return q;
+      const newHist = advance ? q.history : [...q.history, {role:"answer",text:studentText}, {role:"probe",text:probe}];
+      return {
+        ...q,
+        turns: [...q.turns, {role:"evaluator", text:bubble}],
+        attempts: attempt,
+        done: advance ? true : q.done,
+        score: Math.min(45, q.score + edsDelta),
+        history: newHist,
+      };
+    }));
     setLoading(false);
-    scrollBottom();
+    setTimeout(()=>{ speak(bubble); scrollBottom(); }, 250);
   }
 
-  function ttsIcon(state) {
-    if (state === "loading") return "⏳";
-    if (state === "playing") return "⏸";
-    if (state === "paused")  return "▶";
-    return "🔊";
-  }
-  function ttsTitle(state) {
-    if (state === "loading") return "Loading audio…";
-    if (state === "playing") return "Pause";
-    if (state === "paused")  return "Resume";
-    return "Play aloud";
+  function submitExam(){
+    if(audioRef.current){ audioRef.current.pause(); audioRef.current=null; }
+    setSubmitted(true);
   }
 
-  const progressCount = examDone ? N : Math.min(qIndex + 1, N);
-  const completedQs = examDone ? N : qIndex;
-  const statusRight = examDone
-    ? "Exam complete"
-    : (qAttempts > 0 ? `Follow-up ${qAttempts} of ${MAX_Q_TURNS - 1}` : "In progress");
+  const tabStyle = (active) => ({
+    flex:1, border:"none", borderRadius:6, padding:"6px 8px", fontSize:12, fontWeight:700, cursor:"pointer",
+    background: active ? T.navy : "transparent", color: active ? "white" : T.inkLight,
+  });
 
-  return (
-    <div style={{ width: "100%", maxWidth: 1100, margin: "0 auto", display: "flex", gap: 20, alignItems: "flex-start" }}>
-
-      {/* ── Left: conversation ── */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {/* Exam header */}
-        <div style={{ background: discipline.color, borderRadius: "12px 12px 0 0",
-          padding: "16px 22px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div>
-            <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, fontWeight: 700,
-              textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>Oral Exam</div>
-            <div style={{ fontFamily: "DM Serif Display, serif", fontSize: 20, color: "white" }}>
-              {discipline.title} — {discipline.subtitle}
-            </div>
-            <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, marginTop: 3 }}>
-              {N} questions · {sourceLabel}
-            </div>
-          </div>
-          <button onClick={onBack} style={{ background: "rgba(255,255,255,0.1)", border: "none",
-            color: "white", borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13 }}>
-            ← Back
-          </button>
-        </div>
-
-        {/* Question progress bar */}
-        <div style={{ background: T.white, border: `1px solid ${T.border}`, borderTop: "none",
-          padding: "10px 20px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: T.muted, marginBottom: 5 }}>
-            <span>Question {progressCount} of {N}</span>
-            <span>{statusRight}</span>
-          </div>
-          <div style={{ display: "flex", gap: 3 }}>
-            {Array.from({ length: N }).map((_, i) => (
-              <div key={i} style={{ flex: 1, height: 4, borderRadius: 2,
-                background: i < completedQs ? (examDone ? T.success : T.gold) : T.border,
-                transition: "background 0.3s" }} />
+  // ── Results view ──
+  if(submitted){
+    return (
+      <div style={{ width:"100%", maxWidth:760, margin:"0 auto" }}>
+        <div style={{ background:T.white, border:`1px solid ${T.border}`, borderRadius:16, padding:"40px 32px", textAlign:"center" }}>
+          <div style={{ fontSize:44, marginBottom:8 }}>✓</div>
+          <h1 style={{ fontFamily:"DM Serif Display, serif", color:T.navy, fontSize:28, margin:"0 0 6px" }}>Exam Submitted</h1>
+          <p style={{ color:T.muted, marginBottom:20 }}>{attemptedCount} of {N} questions answered · {N-attemptedCount} skipped.</p>
+          <div style={{ display:"flex", justifyContent:"center", marginBottom:24 }}><EDSGauge score={edsScore} /></div>
+          <div style={{ textAlign:"left", maxWidth:540, margin:"0 auto 26px" }}>
+            {qData.map((q,i)=>(
+              <div key={i} style={{ display:"flex", justifyContent:"space-between", gap:14, padding:"8px 0", borderBottom:`1px solid ${T.border}`, fontSize:13 }}>
+                <span style={{ color:T.ink, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>Q{i+1}. {bank[i].topic || bank[i].q}</span>
+                <span style={{ color: q.attempted ? T.success : T.muted, fontWeight:700, flexShrink:0 }}>{q.attempted ? "Answered" : "Skipped"}</span>
+              </div>
             ))}
           </div>
+          <button className="btn-primary" onClick={onBack}>← Back to Exams</button>
         </div>
+      </div>
+    );
+  }
 
-        {/* Conversation */}
-        <div ref={scrollRef} style={{ background: T.white, border: `1px solid ${T.border}`,
-          borderTop: "none", borderRadius: "0 0 12px 12px",
-          height: 420, overflowY: "auto", padding: "20px 20px 0" }}>
-
-          {turns.map((turn, i) => (
-            <div key={i} style={{ marginBottom: 16,
-              display: "flex", flexDirection: "column",
-              alignItems: turn.role === "student" ? "flex-end" : "flex-start" }}>
-              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-                letterSpacing: "0.06em", marginBottom: 5,
-                color: turn.role === "student" ? T.navyLight : discipline.accent }}>
-                {turn.role === "student" ? studentName : "Epistemy Evaluator"}
-              </div>
-              <div style={{
-                maxWidth: "86%",
-                background: turn.role === "student" ? T.navy : T.parchmentDark,
-                border: turn.role === "student" ? "none" : `1px solid ${T.border}`,
-                borderRadius: turn.role === "student" ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
-                padding: "11px 15px",
-                fontSize: 14, lineHeight: 1.65, whiteSpace: "pre-wrap",
-                color: turn.role === "student" ? "white" : T.navy,
-              }}>
-                {turn.text}
-              </div>
-            </div>
-          ))}
-
-          {loading && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0 16px" }}>
-              {[0,1,2].map(i => (
-                <div key={i} style={{ width: 7, height: 7, borderRadius: "50%",
-                  background: discipline.accent,
-                  animation: `bounce 1s ease-in-out ${i*0.15}s infinite` }} />
-              ))}
-              <span style={{ fontSize: 12, color: T.muted }}>Evaluating…</span>
-            </div>
-          )}
-
-          {examDone && !loading && (
-            <div style={{ textAlign: "center", padding: "20px 0 24px" }}>
-              <div style={{ fontSize: 13, color: T.success, fontWeight: 600, marginBottom: 14 }}>
-                ✓ Exam session complete · {N} questions
-              </div>
-              <button className="btn-secondary" onClick={onBack}>← Back to Disciplines</button>
-            </div>
-          )}
-        </div>
-
-        {/* Input */}
-        {!examDone && (
-          <div style={{ marginTop: 12 }}>
-            {(listening || interimText) && (
-              <div style={{ background: "#FFFBF0", border: `1px dashed ${T.gold}`, borderRadius: 8,
-                padding: "8px 12px", marginBottom: 8, fontSize: 13, color: T.inkLight,
-                fontStyle: "italic", minHeight: 30 }}>
-                <span style={{ color: T.gold, fontWeight: 700, fontStyle: "normal", marginRight: 6 }}>●</span>
-                {interimText || "Listening…"}
-              </div>
-            )}
-            <textarea
-              value={draft}
-              onChange={e => setDraft(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSubmit(); }}
-              placeholder={answered === 0
-                ? "Answer the question above… (⌘↵ to submit)"
-                : "Answer the question above… (⌘↵ to submit)"}
-              style={{ width: "100%", minHeight: 90, padding: "12px 14px",
-                border: `1.5px solid ${listening ? discipline.accent : T.border}`,
-                borderRadius: 10, fontFamily: "Inter, sans-serif", fontSize: 14,
-                color: T.ink, background: listening ? "#FFFDF5" : T.parchment,
-                resize: "none", outline: "none", boxSizing: "border-box",
-                marginBottom: 10, transition: "border-color 0.2s, background 0.2s" }}
-            />
-            <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
-              <button
-                onClick={playCurrent}
-                disabled={lastEvalIndex < 0 || currentTts === "playing"}
-                title="Play the evaluator's response"
-                style={{
-                  padding: "0 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
-                  border: `1.5px solid ${T.navy}`,
-                  background: currentTts === "playing" ? T.navy : "transparent",
-                  color: currentTts === "playing" ? "white" : T.navy,
-                  cursor: lastEvalIndex < 0 || currentTts === "playing" ? "default" : "pointer",
-                  opacity: lastEvalIndex < 0 ? 0.4 : 1,
-                  display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
-                }}>
-                {currentTts === "loading" ? "⏳" : "▶"} Play
-              </button>
-              <button
-                onClick={pauseCurrent}
-                disabled={currentTts !== "playing"}
-                title="Pause playback"
-                style={{
-                  padding: "0 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
-                  border: `1.5px solid ${T.navy}`, background: "transparent", color: T.navy,
-                  cursor: currentTts === "playing" ? "pointer" : "default",
-                  opacity: currentTts === "playing" ? 1 : 0.4,
-                  display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
-                }}>
-                ⏸ Pause
-              </button>
-              <button
-                onClick={toggleMic}
-                title={listening ? "Stop recording (commits transcript)" : "Start voice input"}
-                style={{
-                  width: 44, borderRadius: 8,
-                  border: `1.5px solid ${listening ? discipline.accent : T.navy}`,
-                  background: listening ? discipline.accent : "transparent",
-                  color: listening ? "white" : T.navy,
-                  cursor: "pointer", fontSize: 18, transition: "all 0.2s",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}>
-                {listening ? "🔴" : "🎤"}
-              </button>
-              <button className="btn-primary" style={{ flex: 1 }}
-                onClick={handleSubmit} disabled={loading || (!draft.trim() && !interimText.trim())}>
-                {loading ? "Evaluating…" : "Submit Answer →"}
-              </button>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
-              {listening
-                ? <div style={{ fontSize: 12, color: discipline.accent, fontWeight: 600 }}>● Recording — click 🔴 to stop and commit</div>
-                : <div style={{ fontSize: 12, color: T.muted }}>▶ Play / ⏸ Pause the evaluator · 🎤 speak your answer · responses also play automatically</div>
-              }
-            </div>
+  // ── Exam view ──
+  return (
+    <div style={{ width:"100%", maxWidth:1150, margin:"0 auto" }}>
+      {/* Header */}
+      <div style={{ background: discipline.color, borderRadius:"12px 12px 0 0", padding:"16px 22px",
+        display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
+        <div>
+          <div style={{ color:"rgba(255,255,255,0.55)", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:2 }}>
+            Oral Exam{previewMode ? " · Preview" : ""}
           </div>
-        )}
+          <div style={{ fontFamily:"DM Serif Display, serif", fontSize:20, color:"white" }}>
+            {discipline.title} — {discipline.subtitle}
+          </div>
+          <div style={{ color:"rgba(255,255,255,0.5)", fontSize:11, marginTop:3 }}>{N} questions · {sourceLabel}</div>
+        </div>
+        <div style={{ display:"flex", gap:8 }}>
+          <button onClick={onBack} style={{ background:"rgba(255,255,255,0.1)", border:"none", color:"white", borderRadius:8, padding:"7px 14px", cursor:"pointer", fontSize:13 }}>← Back</button>
+          <button onClick={submitExam} style={{ background:T.gold, border:"none", color:T.navy, borderRadius:8, padding:"7px 16px", cursor:"pointer", fontSize:13, fontWeight:700 }}>Submit Exam</button>
+        </div>
       </div>
 
-      {/* ── Right: single Behind the Scenes pane ── */}
-      <div style={{ width: 300, flexShrink: 0 }}>
-        <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, background: T.white, overflow: "hidden" }}>
+      {/* Question grid (green = attempted) */}
+      <div style={{ background:T.white, border:`1px solid ${T.border}`, borderTop:"none", padding:"10px 16px" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:T.muted, marginBottom:8 }}>
+          <span>Question {current+1} of {N}</span>
+          <span>{attemptedCount} answered · {N-attemptedCount} remaining</span>
+        </div>
+        <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+          {qData.map((q,i)=>{
+            const isCur = i===current;
+            const bg = q.attempted ? T.success : (isCur ? T.gold : T.parchmentDark);
+            const color = (q.attempted || isCur) ? "white" : T.inkLight;
+            return (
+              <button key={i} onClick={()=>goTo(i)} title={`Question ${i+1}${q.attempted?" · answered":""}`}
+                style={{ width:30, height:30, borderRadius:8, border: isCur?`2px solid ${T.navy}`:`1px solid ${T.border}`,
+                  background:bg, color, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                {i+1}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
-          {/* Pane header */}
-          <div style={{ background: "#FBF6EA", borderBottom: `1px dashed ${T.gold}`, padding: "11px 16px" }}>
-            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.03em", color: T.navy,
-              display: "flex", alignItems: "center", gap: 6 }}>
-              <span>🔍</span> Behind the Scenes
-            </div>
-            <div style={{ fontSize: 11, color: T.inkLight, marginTop: 4, lineHeight: 1.5 }}>
-              Instructor-facing analytics, hidden from the student during the exam.
-            </div>
-          </div>
+      {/* Two columns */}
+      <div style={{ display:"flex", gap:20, alignItems:"flex-start", background:T.white, border:`1px solid ${T.border}`,
+        borderTop:"none", borderRadius:"0 0 12px 12px", padding:"18px 18px 20px" }}>
 
-          {/* EDS Score section */}
-          <div style={{ padding: "18px 16px", textAlign: "center", borderBottom: `1px solid ${T.border}` }}>
-            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase",
-              letterSpacing: "0.07em", color: T.muted, marginBottom: 12 }}>
-              Epistemic Depth Score
-            </div>
-            <EDSGauge score={edsScore} />
-            <div style={{ marginTop: 14, fontSize: 12, color: T.muted, lineHeight: 1.5 }}>
-              Updates after each exchange based on concept graph traversal depth.
-            </div>
-          </div>
-
-          {/* Concept Graph section */}
-          <div style={{ padding: "16px 12px", borderBottom: `1px solid ${T.border}` }}>
-            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase",
-              letterSpacing: "0.07em", color: T.muted, marginBottom: 10, paddingLeft: 4 }}>
-              Concept Graph
-            </div>
-            <div style={{ height: 200, overflow: "hidden" }}>
-              <ConceptGraph discipline={discipline} traversed={traversed} />
-            </div>
-            {log.length > 0 && (
-              <div style={{ marginTop: 10, borderTop: `1px solid ${T.border}`, paddingTop: 10 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-                  color: T.muted, marginBottom: 6, letterSpacing: "0.06em" }}>Traversal Log</div>
-                <div style={{ maxHeight: 80, overflowY: "auto" }}>
-                  {log.map((l, i) => (
-                    <div key={i} style={{ fontSize: 11, color: T.gold, padding: "2px 0",
-                      fontFamily: "monospace" }}>{l}</div>
-                  ))}
+        {/* Left: current question screen */}
+        <div style={{ flex:1, minWidth:0 }}>
+          <div ref={scrollRef} style={{ maxHeight:360, overflowY:"auto", paddingRight:4, marginBottom:14 }}>
+            {cur.turns.map((t,i)=>(
+              <div key={i} style={{ marginBottom:14, display:"flex", flexDirection:"column",
+                alignItems: t.role==="student" ? "flex-end" : "flex-start" }}>
+                <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:5,
+                  color: t.role==="student" ? T.navyLight : discipline.accent }}>
+                  {t.role==="student" ? studentName : "Epistemy Evaluator"}
+                </div>
+                <div style={{ maxWidth:"88%",
+                  background: t.role==="student" ? T.navy : T.parchmentDark,
+                  border: t.role==="student" ? "none" : `1px solid ${T.border}`,
+                  borderRadius: t.role==="student" ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
+                  padding:"11px 15px", fontSize:14, lineHeight:1.65, whiteSpace:"pre-wrap",
+                  color: t.role==="student" ? "white" : T.navy }}>
+                  {t.text}
                 </div>
               </div>
+            ))}
+            {loading && (
+              <div style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0 12px" }}>
+                {[0,1,2].map(i=>(<div key={i} style={{ width:7, height:7, borderRadius:"50%", background:discipline.accent, animation:`bounce 1s ease-in-out ${i*0.15}s infinite` }} />))}
+                <span style={{ fontSize:12, color:T.muted }}>Evaluating…</span>
+              </div>
             )}
           </div>
 
-          {/* Graph Coverage section */}
-          <div style={{ padding: "14px 16px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase",
-                letterSpacing: "0.07em", color: T.muted }}>Graph Coverage</div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: T.navy }}>
-                {traversed.length}/{discipline.nodes.length}
+          {/* Input or done note */}
+          {cur.done ? (
+            <div style={{ background:T.successBg, border:`1px solid ${T.success}`, borderRadius:10, padding:"11px 14px",
+              fontSize:13, color:T.success, fontWeight:600, marginBottom:6 }}>
+              ✓ Answer recorded. Use the navigation below to continue.
+            </div>
+          ) : (
+            <div>
+              {(listening || interimText) && (
+                <div style={{ background:"#FFFBF0", border:`1px dashed ${T.gold}`, borderRadius:8, padding:"8px 12px",
+                  marginBottom:8, fontSize:13, color:T.inkLight, fontStyle:"italic" }}>
+                  <span style={{ color:T.gold, fontWeight:700, fontStyle:"normal", marginRight:6 }}>●</span>
+                  {interimText || "Listening…"}
+                </div>
+              )}
+              <textarea
+                value={draft}
+                onChange={e=>setDraft(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter" && (e.metaKey||e.ctrlKey)) handleAnswer(); }}
+                placeholder="Answer the question above… (⌘↵ to submit)"
+                style={{ width:"100%", minHeight:84, padding:"12px 14px",
+                  border:`1.5px solid ${listening?discipline.accent:T.border}`, borderRadius:10,
+                  fontFamily:"Inter, sans-serif", fontSize:14, color:T.ink,
+                  background: listening?"#FFFDF5":T.parchment, resize:"none", outline:"none", boxSizing:"border-box", marginBottom:10 }}
+              />
+              <div style={{ display:"flex", gap:8, alignItems:"stretch" }}>
+                <button onClick={playCurrent} disabled={!curLatestEval || ttsState==="playing"}
+                  style={{ padding:"0 14px", borderRadius:8, fontSize:13, fontWeight:600, border:`1.5px solid ${T.navy}`,
+                    background: ttsState==="playing"?T.navy:"transparent", color: ttsState==="playing"?"white":T.navy,
+                    cursor:(!curLatestEval||ttsState==="playing")?"default":"pointer", opacity:!curLatestEval?0.4:1, whiteSpace:"nowrap" }}>
+                  {ttsState==="loading"?"⏳":"▶"} Play
+                </button>
+                <button onClick={pauseCurrent} disabled={ttsState!=="playing"}
+                  style={{ padding:"0 14px", borderRadius:8, fontSize:13, fontWeight:600, border:`1.5px solid ${T.navy}`,
+                    background:"transparent", color:T.navy, cursor: ttsState==="playing"?"pointer":"default", opacity: ttsState==="playing"?1:0.4, whiteSpace:"nowrap" }}>
+                  ⏸ Pause
+                </button>
+                <button onClick={toggleMic} title={listening?"Stop recording":"Start voice input"}
+                  style={{ width:44, borderRadius:8, border:`1.5px solid ${listening?discipline.accent:T.navy}`,
+                    background: listening?discipline.accent:"transparent", color: listening?"white":T.navy,
+                    cursor:"pointer", fontSize:18, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  {listening?"🔴":"🎤"}
+                </button>
+                <button className="btn-primary" style={{ flex:1 }} onClick={handleAnswer}
+                  disabled={loading || (!draft.trim() && !interimText.trim())}>
+                  {loading ? "Evaluating…" : "Submit Answer →"}
+                </button>
               </div>
             </div>
-            <div style={{ background: T.border, borderRadius: 4, height: 8, overflow: "hidden" }}>
-              <div style={{ height: "100%", borderRadius: 4,
-                width: `${(traversed.length / discipline.nodes.length) * 100}%`,
-                background: `linear-gradient(90deg, ${T.gold}, ${T.goldLight})`,
-                transition: "width 0.5s ease" }} />
+          )}
+
+          {/* Navigation row */}
+          <div style={{ display:"flex", gap:8, alignItems:"center", marginTop:14 }}>
+            <button className="btn-secondary" onClick={()=>prevIdx!==null && goTo(prevIdx)} disabled={prevIdx===null}
+              style={{ opacity: prevIdx===null?0.4:1 }}>← Previous</button>
+            <div style={{ flex:1 }} />
+            {nextIdx!==null
+              ? <button className="btn-secondary" onClick={()=>goTo(nextIdx)}>{cur.attempted ? "Next →" : "Skip →"}</button>
+              : <button className="btn-primary" onClick={submitExam}>Submit Exam →</button>}
+          </div>
+        </div>
+
+        {/* Right: Behind the Scenes */}
+        <div style={{ width:290, flexShrink:0 }}>
+          <div style={{ border:`1px solid ${T.border}`, borderRadius:12, overflow:"hidden" }}>
+            <div style={{ background:"#FBF6EA", borderBottom:`1px dashed ${T.gold}`, padding:"10px 14px" }}>
+              <div style={{ fontSize:12, fontWeight:800, letterSpacing:"0.03em", color:T.navy, display:"flex", alignItems:"center", gap:6 }}>
+                <span>🔍</span> Behind the Scenes
+              </div>
+              <div style={{ fontSize:11, color:T.inkLight, marginTop:3, lineHeight:1.5 }}>
+                Instructor-facing analytics, hidden from the student during the exam.
+              </div>
             </div>
-            <div style={{ fontSize: 11, color: T.muted, marginTop: 6 }}>
-              concepts probed in prerequisite chain
+
+            {/* Concept graph, two views */}
+            <div style={{ padding:"14px 12px", borderBottom:`1px solid ${T.border}` }}>
+              <div style={{ fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.07em", color:T.muted, marginBottom:9, paddingLeft:4 }}>
+                Concept Graph
+              </div>
+              <div style={{ display:"flex", gap:4, background:T.parchment, borderRadius:8, padding:3, marginBottom:9 }}>
+                <button onClick={()=>setGraphView("questions")} style={tabStyle(graphView==="questions")}>By questions</button>
+                <button onClick={()=>setGraphView("responses")} style={tabStyle(graphView==="responses")}>By responses</button>
+              </div>
+              <div style={{ fontSize:10, color:T.muted, marginBottom:8, paddingLeft:4, lineHeight:1.5 }}>
+                {graphView==="questions"
+                  ? "Concepts covered by the questions reached so far."
+                  : "Concepts demonstrated by the student's responses."}
+              </div>
+              <div style={{ height:180, overflow:"hidden" }}>
+                <ConceptGraph discipline={discipline} traversed={shownTraversed} />
+              </div>
+              <div style={{ marginTop:10 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, marginBottom:5 }}>
+                  <span style={{ color:T.muted, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em" }}>Coverage</span>
+                  <span style={{ color:T.navy, fontWeight:700 }}>{shownCount}/{discipline.nodes.length}</span>
+                </div>
+                <div style={{ background:T.border, borderRadius:4, height:7, overflow:"hidden" }}>
+                  <div style={{ height:"100%", borderRadius:4, width:`${(shownCount/discipline.nodes.length)*100}%`,
+                    background:`linear-gradient(90deg, ${T.gold}, ${T.goldLight})`, transition:"width 0.5s ease" }} />
+                </div>
+              </div>
+            </div>
+
+            {/* EDS score (moved to the bottom) */}
+            <div style={{ padding:"16px 14px", textAlign:"center" }}>
+              <div style={{ fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.07em", color:T.muted, marginBottom:12 }}>
+                Epistemic Depth Score
+              </div>
+              <EDSGauge score={edsScore} />
+              <div style={{ marginTop:12, fontSize:11, color:T.muted, lineHeight:1.5 }}>
+                Accumulates as responses demonstrate causal understanding.
+              </div>
             </div>
           </div>
-
         </div>
       </div>
 
-      <style>{`
-        @keyframes bounce {
-          0%, 100% { transform: translateY(0); opacity: 0.5; }
-          50% { transform: translateY(-5px); opacity: 1; }
-        }
-      `}</style>
+      <style>{`@keyframes bounce{0%,100%{transform:translateY(0);opacity:0.5;}50%{transform:translateY(-5px);opacity:1;}}`}</style>
     </div>
   );
 }
