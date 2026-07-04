@@ -828,7 +828,7 @@ function distributeQuestions(concepts, qCount, mode) {
                 .sort((a, b) => b.frac - a.frac);
   let r = 0;
   while (total < qCount) { counts[rema[r % n].i]++; total++; r++; }
-  return concepts.map((c, i) => ({ label: c.label, count: counts[i] }))
+  return concepts.map((c, i) => ({ id: c.id, label: c.label, count: counts[i] }))
                  .filter(d => d.count > 0);
 }
 
@@ -849,6 +849,106 @@ function buildVariants(config) {
     edsFocus: meta.edsFocus,
     distribution: distributeQuestions(concepts, qCount, a.mode),
   }));
+}
+
+// ── Question pool keyed by topic id (matches MBA_TOPICS ids). The student exam
+// is assembled from the professor's chosen distribution: for each selected topic
+// it pulls that topic's number of questions, so topics, counts, and the variant's
+// emphasis all flow into what the student actually sees. ──
+const QUESTION_POOL = {
+  dcf: [
+    "Walk me through building a DCF from projected free cash flows to enterprise value.",
+    "Why does terminal value usually dominate a DCF, and what makes that fragile?",
+    "How do you handle a company with negative near-term free cash flow in a DCF?",
+    "Which single DCF assumption would you stress-test first, and why?",
+  ],
+  capital: [
+    "Modigliani-Miller says structure is irrelevant in a perfect market. Which frictions make it matter?",
+    "How would you set a target debt level for a stable, cash-generative business?",
+    "Why does the interest tax shield have limits as a reason to add debt?",
+    "How does adding leverage change a firm's cost of equity, and why?",
+  ],
+  wacc: [
+    "Walk me through building a WACC from scratch for a public company.",
+    "Why is WACC the right discount rate for unlevered free cash flows?",
+    "What goes wrong if you use one firm-wide WACC for a project in a different risk class?",
+    "How do you estimate the cost of equity, and where is it weakest?",
+  ],
+  fsa: [
+    "Net income rose but operating cash flow fell. What explains it, and which matters more?",
+    "How do the three financial statements connect to one another?",
+    "What early-warning signs would you look for in a company's working capital trends?",
+    "How can accrual accounting mask the cash reality of a business?",
+  ],
+  wc: [
+    "Why does an increase in accounts receivable show up as a use of cash?",
+    "How does the cash conversion cycle affect a firm's financing needs?",
+    "What trade-offs come with tightening supplier payment terms?",
+    "How would you free up cash from working capital without hurting operations?",
+  ],
+  ma: [
+    "What makes a deal accretive versus dilutive, and how do P/E ratios drive that?",
+    "A buyer is paying a 40% premium. What synergies must materialize to justify it?",
+    "How does an all-stock deal change your view of the price versus all-cash?",
+    "What are the most common reasons acquisitions destroy value?",
+  ],
+  risk: [
+    "What does beta actually measure, and why does CAPM reward it but not total volatility?",
+    "Distinguish systematic from idiosyncratic risk and explain why only one is priced.",
+    "How would you estimate beta for a company with a short trading history?",
+    "Where does CAPM break down in practice?",
+  ],
+  options: [
+    "Explain the intuition for why an option's value rises with volatility.",
+    "Walk me through the payoff of a protective put and when you would use it.",
+    "What does put-call parity tell you, and why must it hold?",
+    "How would you hedge a currency exposure using derivatives?",
+  ],
+  budgeting: [
+    "A project has positive NPV but a messy IRR. How do you reconcile the two?",
+    "Two mutually exclusive projects have different lives and scales. How do you choose?",
+    "Why can NPV and IRR disagree, and which do you trust?",
+    "How do you treat sunk costs and opportunity costs in a project decision?",
+  ],
+  dividend: [
+    "Why might dividend policy be irrelevant in theory but matter in practice?",
+    "How do buybacks compare to dividends as ways to return cash?",
+    "What signals does a dividend cut send, and to whom?",
+    "How would you decide a payout level for a maturing company?",
+  ],
+  realestate: [
+    "How does leverage change the risk and return profile of a real estate investment?",
+    "Walk me through how a cap rate relates to value and required return.",
+    "What drives the gap between levered and unlevered IRR in a property deal?",
+    "How would you stress-test a real estate pro forma?",
+  ],
+  pe: [
+    "Walk me through the levers that drive returns in an LBO.",
+    "You buy at 8x and sell at 10x while EBITDA grows 50%. Decompose the return.",
+    "How do you structure the debt in an LBO, and what constrains how much you use?",
+    "Why does entry-multiple discipline matter so much to LBO returns?",
+  ],
+};
+
+const GENERIC_Q = [
+  (l) => `Explain the core idea behind ${l} and why it matters.`,
+  (l) => `Walk me through a key mechanism or trade-off in ${l}.`,
+  (l) => `Where does ${l} most often go wrong in practice?`,
+  (l) => `How would you apply ${l} to a real decision?`,
+];
+
+// Assemble the student's question set from a chosen exam's distribution.
+function assembleExamQuestions(distribution) {
+  const out = [];
+  (distribution || []).forEach(d => {
+    const pool = QUESTION_POOL[d.id] || null;
+    const n = d.count || 0;
+    for (let i = 0; i < n; i++) {
+      const q = pool ? pool[i % pool.length] : GENERIC_Q[i % GENERIC_Q.length](d.label);
+      out.push({ topic: d.label, q });
+    }
+  });
+  return out;
 }
 
 async function generateExams(config, onProgress) {
@@ -1671,22 +1771,37 @@ function StudentPreview({ exam, config, onClose }) {
 }
 
 // ── Rubric export ──
-function exportRubric(chosen, config, rubric) {
-  const rows = (rubric && rubric.length === chosen.distribution.length)
-    ? rubric
-    : chosen.distribution.map(d => ({ label: d.label, count: d.count, weight: d.count }));
+function exportRubric(chosen, config, dist, qScores) {
+  const rows = (dist && dist.length)
+    ? dist
+    : chosen.distribution.map(d => ({ label: d.label, count: d.count }));
   const totalQ = rows.reduce((s, r) => s + r.count, 0);
-  const wTotal = rows.reduce((s, r) => s + r.weight, 0) || 1;
 
-  const dist = rows.map(r => {
-    const pct = Math.round((r.weight / wTotal) * 100);
-    return `
+  const distHtml = rows.map(r => `
     <tr>
       <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;">${r.label}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;text-align:center;">${r.count}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;text-align:center;font-weight:700;color:#1B2A4A;">${pct}%</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;text-align:center;font-weight:700;color:#1B2A4A;">${r.count}</td>
+    </tr>`).join("");
+
+  const scores = (qScores && qScores.length) ? qScores : [];
+  const sTotal = scores.reduce((s, r) => s + r.score, 0) || 1;
+  const scoreHtml = scores.map((r, i) => {
+    const pct = Math.round((r.score / sTotal) * 100);
+    return `
+    <tr>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;text-align:center;">${i + 1}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;font-size:13px;">${r.q}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;text-align:center;font-weight:700;color:#1B2A4A;">${r.score}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;text-align:center;">${pct}%</td>
     </tr>`;
   }).join("");
+  const scoreSection = scores.length ? `
+    <h2>Question-Level Scoring</h2>
+    <p style="font-size:13px;color:#8A7F6E;margin:-6px 0 14px;">Points attributed to each question by the instructor. Share shows each question's contribution to the grade.</p>
+    <table>
+      <thead><tr><th style="text-align:center">#</th><th>Question</th><th style="text-align:center">Points</th><th style="text-align:center">Share</th></tr></thead>
+      <tbody>${scoreHtml}</tbody>
+    </table>` : "";
 
   const html = `<!DOCTYPE html>
 <html>
@@ -1737,11 +1852,12 @@ function exportRubric(chosen, config, rubric) {
     </div>
 
     <h2>Question Distribution</h2>
-    <p style="font-size:13px;color:#8A7F6E;margin:-6px 0 14px;">Score weight reflects how much each topic contributes to the final grade. Question counts and weights are set by the instructor.</p>
+    <p style="font-size:13px;color:#8A7F6E;margin:-6px 0 14px;">Number of questions per topic, set by the instructor.</p>
     <table>
-      <thead><tr><th>Topic</th><th style="text-align:center">Questions</th><th style="text-align:center">Score Weight</th></tr></thead>
-      <tbody>${dist}</tbody>
+      <thead><tr><th>Topic</th><th style="text-align:center">Questions</th></tr></thead>
+      <tbody>${distHtml}</tbody>
     </table>
+    ${scoreSection}
 
     <h2>Epistemic Depth Score (EDS) Model</h2>
     <div class="eds-box">
@@ -1808,30 +1924,102 @@ function exportRubric(chosen, config, rubric) {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
+function QuestionTranscript({ questions, scoreTotal, setQScore, resetScores, onClose }) {
+  const stepStyle = (disabled) => ({
+    width: 24, height: 24, borderRadius: 6, border: `1px solid ${T.border}`,
+    background: T.white, color: T.navy, fontSize: 16, lineHeight: 1,
+    cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.4 : 1,
+    display: "flex", alignItems: "center", justifyContent: "center",
+  });
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(20,20,30,0.55)",
+      zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: T.parchment, borderRadius: 14,
+        width: "100%", maxWidth: 720, maxHeight: "86vh", display: "flex", flexDirection: "column",
+        overflow: "hidden", border: `1px solid ${T.border}` }}>
+        <div style={{ background: T.navy, padding: "16px 22px", display: "flex",
+          alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontFamily: "DM Serif Display, serif", fontSize: 20, color: "white" }}>Question Transcript &amp; Scoring</div>
+            <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, marginTop: 2 }}>
+              Every question the student will be asked, with the score attributed to it.
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "rgba(255,255,255,0.1)", border: "none",
+            color: "white", borderRadius: 8, width: 30, height: 30, cursor: "pointer", fontSize: 16 }}>×</button>
+        </div>
+
+        <div style={{ padding: "16px 22px", overflowY: "auto" }}>
+          <p style={{ fontSize: 12, color: T.inkLight, margin: "0 0 12px" }}>
+            Adjust any score. The share each question contributes to the grade renormalizes automatically.
+          </p>
+          {questions.map((r, i) => {
+            const pct = Math.round((r.score / scoreTotal) * 100);
+            return (
+              <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start",
+                padding: "12px 0", borderBottom: `1px solid ${T.border}` }}>
+                <div style={{ width: 26, height: 26, borderRadius: "50%", background: T.navy, color: "white",
+                  fontSize: 12, fontWeight: 700, flexShrink: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: T.gold,
+                    letterSpacing: "0.05em", marginBottom: 3 }}>{r.topic}</div>
+                  <div style={{ fontSize: 14, color: T.ink, lineHeight: 1.5 }}>{r.q}</div>
+                </div>
+                <div style={{ flexShrink: 0, textAlign: "right" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
+                    <button onClick={() => setQScore(i, r.score - 1)} disabled={r.score <= 0} style={stepStyle(r.score <= 0)}>−</button>
+                    <input type="number" min="0" value={r.score}
+                      onChange={e => setQScore(i, Math.max(0, Number(e.target.value) || 0))}
+                      style={{ width: 48, textAlign: "center", fontSize: 14, fontWeight: 700, color: T.navy,
+                        border: `1px solid ${T.border}`, borderRadius: 6, padding: "4px 0", background: T.white }} />
+                    <button onClick={() => setQScore(i, r.score + 1)} style={stepStyle(false)}>+</button>
+                  </div>
+                  <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>{pct}% of grade</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ borderTop: `1px solid ${T.border}`, background: T.white, padding: "12px 22px",
+          display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: 13, color: T.ink }}>Total points: <strong style={{ color: T.navy }}>{scoreTotal}</strong></span>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={resetScores} style={{ background: "transparent", border: `1px solid ${T.border}`,
+              borderRadius: 6, padding: "7px 14px", fontSize: 13, color: T.inkLight, cursor: "pointer" }}>Reset scores</button>
+            <button className="btn-primary" onClick={onClose} style={{ padding: "7px 18px" }}>Done</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StepComplete({ exam, config }) {
   const chosen = exam;
   const [linkCopied, setLinkCopied] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  const [showWeights, setShowWeights] = useState(false);
-  const [dist, setDist] = useState(() =>
-    chosen ? chosen.distribution.map(d => ({ label: d.label, count: d.count, weight: d.count })) : []);
-  const examLink = `https://app.epistemy.ai/exam/haas-mba-finance-${chosen?.id}-${Date.now().toString(36)}`;
+  const [showCounts, setShowCounts] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
 
+  // Per-topic question counts (simplified: count only)
+  const [dist, setDist] = useState(() =>
+    chosen ? chosen.distribution.map(d => ({ label: d.label, count: d.count })) : []);
   const totalQ = dist.reduce((s, r) => s + r.count, 0);
-  const wTotal = dist.reduce((s, r) => s + r.weight, 0) || 1;
   const origTotal = chosen ? chosen.distribution.reduce((s, d) => s + d.count, 0) : 0;
-  const isCustom = chosen
-    ? dist.some((r, i) => r.count !== chosen.distribution[i].count || r.weight !== chosen.distribution[i].count)
-    : false;
-  function setCount(i, val) {
-    setDist(prev => prev.map((r, idx) => idx === i ? { ...r, count: Math.max(0, val) } : r));
-  }
-  function setWeight(i, val) {
-    setDist(prev => prev.map((r, idx) => idx === i ? { ...r, weight: val } : r));
-  }
-  function resetDist() {
-    if (chosen) setDist(chosen.distribution.map(d => ({ label: d.label, count: d.count, weight: d.count })));
-  }
+  const countsCustom = chosen ? dist.some((r, i) => r.count !== chosen.distribution[i].count) : false;
+  function setCount(i, val) { setDist(prev => prev.map((r, idx) => idx === i ? { ...r, count: Math.max(0, val) } : r)); }
+  function resetCounts() { if (chosen) setDist(chosen.distribution.map(d => ({ label: d.label, count: d.count }))); }
+
+  // Per-question scoring: the actual questions the student will face
+  const bank = STUDENT_BANKS[chosen && chosen.bankKey] || STUDENT_BANKS.balanced;
+  const [qScores, setQScores] = useState(() => bank.map(qq => ({ topic: qq.topic, q: qq.q, score: 10 })));
+  const scoreTotal = qScores.reduce((s, r) => s + r.score, 0) || 1;
+  function setQScore(i, val) { setQScores(prev => prev.map((r, idx) => idx === i ? { ...r, score: Math.max(0, val) } : r)); }
+  function resetScores() { setQScores(bank.map(qq => ({ topic: qq.topic, q: qq.q, score: 10 }))); }
+
+  const examLink = `https://app.epistemy.ai/exam/haas-mba-finance-${chosen && chosen.id}-${Date.now().toString(36)}`;
 
   function handleShare() {
     navigator.clipboard.writeText(examLink).then(() => {
@@ -1848,43 +2036,28 @@ function StepComplete({ exam, config }) {
       {showPreview && (
         <StudentPreview exam={chosen} config={config} onClose={() => setShowPreview(false)} />
       )}
+      {showTranscript && (
+        <QuestionTranscript questions={qScores} scoreTotal={scoreTotal}
+          setQScore={setQScore} resetScores={resetScores} onClose={() => setShowTranscript(false)} />
+      )}
       <div className="card">
         <div className="completion">
           <div className="completion-icon">🎓</div>
           <h2>Exam Ready to Assign</h2>
           <p>
-            Your <strong>{chosen?.title}</strong> has been saved and is ready for student access.
+            Your <strong>{chosen && chosen.title}</strong> has been saved and is ready for student access.
             Students will take it as an adaptive oral exam scored by EDS.
           </p>
 
           <div className="exam-summary">
-            <div className="summary-row">
-              <span>Course</span>
-              <strong>MBA Finance Core · Haas</strong>
-            </div>
-            <div className="summary-row">
-              <span>Exam type</span>
-              <strong>{chosen?.title}</strong>
-            </div>
-            <div className="summary-row">
-              <span>Questions</span>
-              <strong>{totalQ}</strong>
-            </div>
-            <div className="summary-row">
-              <span>Duration</span>
-              <strong>{config.examLen} minutes</strong>
-            </div>
-            <div className="summary-row">
-              <span>Topics covered</span>
-              <strong>{config.selectedTopics.length} topics</strong>
-            </div>
-            <div className="summary-row">
-              <span>Scoring model</span>
-              <strong>Epistemic Depth Score (EDS)</strong>
-            </div>
+            <div className="summary-row"><span>Course</span><strong>MBA Finance Core · Haas</strong></div>
+            <div className="summary-row"><span>Exam type</span><strong>{chosen && chosen.title}</strong></div>
+            <div className="summary-row"><span>Questions</span><strong>{totalQ}</strong></div>
+            <div className="summary-row"><span>Duration</span><strong>{config.examLen} minutes</strong></div>
+            <div className="summary-row"><span>Topics covered</span><strong>{config.selectedTopics.length} topics</strong></div>
+            <div className="summary-row"><span>Scoring model</span><strong>Epistemic Depth Score (EDS)</strong></div>
           </div>
 
-          {/* Share link UI */}
           {linkCopied && (
             <div className="status-box success" style={{ marginBottom: 20, justifyContent: "center" }}>
               ✓ Link copied to clipboard
@@ -1896,59 +2069,40 @@ function StepComplete({ exam, config }) {
             </div>
           )}
 
-          {/* Question distribution & rubric weighting editor */}
+          {/* Question count editor (simplified to counts only) */}
           <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, marginBottom: 20,
             textAlign: "left", overflow: "hidden" }}>
             <button
-              onClick={() => setShowWeights(s => !s)}
+              onClick={() => setShowCounts(s => !s)}
               style={{ width: "100%", background: T.parchment, border: "none",
                 padding: "12px 16px", cursor: "pointer", display: "flex",
                 alignItems: "center", justifyContent: "space-between",
                 fontSize: 14, fontWeight: 700, color: T.navy, fontFamily: "Inter, sans-serif" }}>
-              <span>⚖ Question Distribution &amp; Rubric Weighting{isCustom ? " · customized" : ""}</span>
-              <span style={{ color: T.muted }}>{showWeights ? "▲" : "▼"}</span>
+              <span>📋 Question Count{countsCustom ? " · customized" : ""}</span>
+              <span style={{ color: T.muted }}>{showCounts ? "▲" : "▼"}</span>
             </button>
-            {showWeights && (
+            {showCounts && (
               <div style={{ padding: "14px 16px", borderTop: `1px solid ${T.border}` }}>
                 <p style={{ fontSize: 12, color: T.inkLight, margin: "0 0 14px", lineHeight: 1.55 }}>
-                  Set the number of questions per topic and how much each topic counts toward the final
-                  grade. Score weights normalize to 100%.
+                  Set the number of questions per topic.
                 </p>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8,
-                  fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: T.muted }}>
-                  <span style={{ flex: 1 }}>Topic</span>
-                  <span style={{ width: 96, textAlign: "center" }}>Questions</span>
-                  <span style={{ width: 130, textAlign: "center" }}>Score Weight</span>
-                  <span style={{ width: 42, textAlign: "right" }}>%</span>
-                </div>
-                {dist.map((r, i) => {
-                  const pct = Math.round((r.weight / wTotal) * 100);
-                  return (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
-                      <span style={{ flex: 1, fontSize: 13, color: T.ink }}>{r.label}</span>
-                      <div style={{ width: 96, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                        <button onClick={() => setCount(i, r.count - 1)} disabled={r.count <= 0}
-                          style={{ width: 24, height: 24, borderRadius: 6, border: `1px solid ${T.border}`,
-                            background: T.white, color: T.navy, fontSize: 16, lineHeight: 1,
-                            cursor: r.count <= 0 ? "default" : "pointer", opacity: r.count <= 0 ? 0.4 : 1,
-                            display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
-                        <span style={{ width: 20, textAlign: "center", fontSize: 14, fontWeight: 700, color: T.navy }}>{r.count}</span>
-                        <button onClick={() => setCount(i, r.count + 1)}
-                          style={{ width: 24, height: 24, borderRadius: 6, border: `1px solid ${T.border}`,
-                            background: T.white, color: T.navy, fontSize: 16, lineHeight: 1, cursor: "pointer",
-                            display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
-                      </div>
-                      <input
-                        type="range" min="0" max="10" step="1" value={r.weight}
-                        onChange={e => setWeight(i, Number(e.target.value))}
-                        style={{ width: 130, accentColor: T.gold, cursor: "pointer" }}
-                      />
-                      <span style={{ width: 42, textAlign: "right", fontSize: 13, fontWeight: 700, color: T.navy }}>
-                        {pct}%
-                      </span>
+                {dist.map((r, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+                    <span style={{ flex: 1, fontSize: 13, color: T.ink }}>{r.label}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <button onClick={() => setCount(i, r.count - 1)} disabled={r.count <= 0}
+                        style={{ width: 24, height: 24, borderRadius: 6, border: `1px solid ${T.border}`,
+                          background: T.white, color: T.navy, fontSize: 16, lineHeight: 1,
+                          cursor: r.count <= 0 ? "default" : "pointer", opacity: r.count <= 0 ? 0.4 : 1,
+                          display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
+                      <span style={{ width: 22, textAlign: "center", fontSize: 14, fontWeight: 700, color: T.navy }}>{r.count}</span>
+                      <button onClick={() => setCount(i, r.count + 1)}
+                        style={{ width: 24, height: 24, borderRadius: 6, border: `1px solid ${T.border}`,
+                          background: T.white, color: T.navy, fontSize: 16, lineHeight: 1, cursor: "pointer",
+                          display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
                   marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
                   <span style={{ fontSize: 13, color: T.ink }}>
@@ -1957,12 +2111,10 @@ function StepComplete({ exam, config }) {
                       <span style={{ color: T.gold, marginLeft: 8, fontSize: 12 }}>was {origTotal}</span>
                     )}
                   </span>
-                  <button
-                    onClick={resetDist}
-                    disabled={!isCustom}
+                  <button onClick={resetCounts} disabled={!countsCustom}
                     style={{ background: "transparent", border: `1px solid ${T.border}`,
                       borderRadius: 6, padding: "5px 12px", fontSize: 12, color: T.inkLight,
-                      cursor: isCustom ? "pointer" : "default", opacity: isCustom ? 1 : 0.5 }}>
+                      cursor: countsCustom ? "pointer" : "default", opacity: countsCustom ? 1 : 0.5 }}>
                     Reset to default
                   </button>
                 </div>
@@ -1977,7 +2129,10 @@ function StepComplete({ exam, config }) {
             <button className="btn-secondary" onClick={() => setShowPreview(true)}>
               👁 Preview as Student
             </button>
-            <button className="btn-secondary" onClick={() => exportRubric(chosen, config, dist)}>
+            <button className="btn-secondary" onClick={() => setShowTranscript(true)}>
+              📝 Question Transcript
+            </button>
+            <button className="btn-secondary" onClick={() => exportRubric(chosen, config, dist, qScores)}>
               📄 Export Rubric
             </button>
           </div>
@@ -2074,7 +2229,7 @@ const DISCIPLINES = [
 // side). With no professor input, a default topic-focused set is used.
 // ══════════════════════════════════════════════════════════════════
 
-const ExamStore = { trackId: null, trackLabel: null };
+const ExamStore = { trackId: null, trackLabel: null, questions: null };
 
 const EXAM_CONTEXT = {
   finance: "Welcome to your MBA Finance Core oral examination. I'll take you through a sequence of questions on valuation, cost of capital, and capital structure. Answer in your own words and reason out loud. I'm following the logic of your thinking, not just the final number. Let's begin.",
@@ -2290,31 +2445,44 @@ function DisciplineLanding({ onSelect }) {
     <div style={{ width: "100%", maxWidth: 860, margin: "0 auto" }}>
       <div style={{ textAlign: "center", marginBottom: 40 }}>
         <h1 style={{ fontFamily: "DM Serif Display, serif", fontSize: 34, color: T.navy, marginBottom: 10 }}>
-          Choose Your Oral Exam
+          Choose Your Exam
         </h1>
-        <p style={{ fontSize: 15, color: T.muted, maxWidth: 520, margin: "0 auto" }}>
-          Select a subject to begin an adaptive Socratic examination. Your Epistemic Depth Score updates in real time as you respond.
+        <p style={{ fontSize: 15, color: T.muted, maxWidth: 540, margin: "0 auto" }}>
+          Your assigned exam is highlighted below. Select it to begin an adaptive Socratic examination. Your Epistemic Depth Score updates in real time as you respond.
         </p>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-        {DISCIPLINES.map(d => (
-          <div key={d.id}
-            onClick={() => onSelect(d)}
-            style={{ background: d.color, borderRadius: 16, padding: "32px 28px",
-              cursor: "pointer", transition: "transform 0.2s, box-shadow 0.2s",
-              boxShadow: "0 4px 20px rgba(0,0,0,0.12)", position: "relative", overflow: "hidden" }}
-            onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-3px)"; e.currentTarget.style.boxShadow = "0 10px 32px rgba(0,0,0,0.2)"; }}
-            onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = "0 4px 20px rgba(0,0,0,0.12)"; }}>
-            <div style={{ position: "absolute", right: -20, top: -20, fontSize: 90, opacity: 0.08 }}>{d.icon}</div>
-            <div style={{ fontSize: 36, marginBottom: 14 }}>{d.icon}</div>
-            <div style={{ fontFamily: "DM Serif Display, serif", fontSize: 24, color: "white", marginBottom: 6 }}>{d.title}</div>
-            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", marginBottom: 20 }}>{d.subtitle}</div>
-            <div style={{ display: "inline-block", background: d.accent, color: "white",
-              borderRadius: 20, padding: "6px 18px", fontSize: 13, fontWeight: 700 }}>
-              Begin Exam →
+        {DISCIPLINES.map(d => {
+          const assigned = d.id === "finance";
+          const subtitle = assigned && ExamStore.trackLabel ? ExamStore.trackLabel : d.subtitle;
+          return (
+            <div key={d.id}
+              onClick={() => onSelect(d)}
+              style={{ background: d.color, borderRadius: 16, padding: "32px 28px",
+                cursor: "pointer", transition: "transform 0.2s, box-shadow 0.2s",
+                boxShadow: assigned ? "0 6px 26px rgba(196,147,63,0.35)" : "0 4px 20px rgba(0,0,0,0.12)",
+                position: "relative", overflow: "hidden",
+                border: assigned ? `2px solid ${T.gold}` : "2px solid transparent" }}
+              onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-3px)"; e.currentTarget.style.boxShadow = "0 10px 32px rgba(0,0,0,0.2)"; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = assigned ? "0 6px 26px rgba(196,147,63,0.35)" : "0 4px 20px rgba(0,0,0,0.12)"; }}>
+              {assigned && (
+                <div style={{ position: "absolute", right: 14, top: 14, background: T.gold, color: T.navy,
+                  borderRadius: 20, padding: "4px 12px", fontSize: 11, fontWeight: 800,
+                  letterSpacing: "0.05em", zIndex: 2 }}>
+                  ASSIGNED
+                </div>
+              )}
+              <div style={{ position: "absolute", right: -20, top: -20, fontSize: 90, opacity: 0.08 }}>{d.icon}</div>
+              <div style={{ fontSize: 36, marginBottom: 14 }}>{d.icon}</div>
+              <div style={{ fontFamily: "DM Serif Display, serif", fontSize: 24, color: "white", marginBottom: 6 }}>{d.title}</div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", marginBottom: 20 }}>{subtitle}</div>
+              <div style={{ display: "inline-block", background: d.accent, color: "white",
+                borderRadius: 20, padding: "6px 18px", fontSize: 13, fontWeight: 700 }}>
+                {assigned ? "Start Exam →" : "Begin Exam →"}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -2325,13 +2493,18 @@ function OralExam({ discipline, studentName, onBack }) {
   // ── Resolve the question bank ──
   // Finance follows the professor's selected exam variant when one exists;
   // otherwise a default topic-focused set. Other disciplines use their default.
+  // Finance uses the professor's assembled set (derived from selected topics,
+  // counts, and variant) when present; otherwise a default topic-focused bank.
+  const derived = (discipline.id === "finance" && ExamStore.questions && ExamStore.questions.length)
+    ? ExamStore.questions : null;
   const bank =
-    discipline.id === "finance"
+    derived ||
+    (discipline.id === "finance"
       ? (STUDENT_BANKS[ExamStore.trackId] || STUDENT_BANKS.balanced)
-      : (STUDENT_BANKS[discipline.id] || STUDENT_BANKS.balanced);
+      : (STUDENT_BANKS[discipline.id] || STUDENT_BANKS.balanced));
   const examContext = EXAM_CONTEXT[discipline.id] || EXAM_CONTEXT.finance;
   const N = bank.length;
-  const usingProfessorSet = discipline.id === "finance" && !!ExamStore.trackId;
+  const usingProfessorSet = discipline.id === "finance" && (!!derived || !!ExamStore.trackId);
   const sourceLabel = usingProfessorSet
     ? `Prof. Benetton · ${ExamStore.trackLabel || "selected exam"}`
     : "Default topic set";
@@ -2437,6 +2610,8 @@ function OralExam({ discipline, studentName, onBack }) {
         body: JSON.stringify({ text: cleanForSpeech(text) }),
       });
       if (!res.ok) throw new Error(`TTS error ${res.status}`);
+      const ctype = res.headers.get("content-type") || "";
+      if (!ctype.includes("audio")) throw new Error("TTS returned non-audio response");
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
@@ -2918,7 +3093,7 @@ function StudentApp({ onSwitchRole }) {
         </div>
       </header>
       <main className="main">
-        {view === "login" && <StudentLogin onLogin={() => { setSelectedDiscipline(DISCIPLINES.find(d => d.id === "finance")); setView("exam"); }} />}
+        {view === "login" && <StudentLogin onLogin={() => setView("disciplines")} />}
         {view === "disciplines" && (
           <DisciplineLanding onSelect={d => { setSelectedDiscipline(d); setView("exam"); }} />
         )}
@@ -3021,7 +3196,7 @@ function InstructorApp({ onSwitchRole }) {
         {step === 1 && !complete && <StepOnboard onNext={() => setStep(2)} />}
         {step === 2 && !complete && <StepUpload onNext={(t) => { setTopics(t); setStep(3); }} />}
         {step === 3 && !complete && <StepConfigExam topics={topics} onNext={(e, cfg) => { setExams(e); setExamConfig(cfg); setStep(4); }} />}
-        {step === 4 && !complete && <StepChooseExam exams={exams} config={examConfig} onNext={(exam) => { if (!exam) return; ExamStore.trackId = exam.bankKey; ExamStore.trackLabel = exam.title; setChosenExam(exam); setComplete(true); }} />}
+        {step === 4 && !complete && <StepChooseExam exams={exams} config={examConfig} onNext={(exam) => { if (!exam) return; ExamStore.trackId = exam.bankKey; ExamStore.trackLabel = exam.title; ExamStore.questions = assembleExamQuestions(exam.distribution); setChosenExam(exam); setComplete(true); }} />}
         {complete && <StepComplete exam={chosenExam} config={examConfig} />}
       </main>
     </div>
