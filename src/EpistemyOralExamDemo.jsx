@@ -128,6 +128,9 @@ const css = `
   }
   .step-label.active { color: ${T.goldLight}; }
   .step-label.done { color: rgba(255,255,255,0.7); }
+  .step-clickable { cursor: pointer; }
+  .step-clickable:hover .step-circle { border-color: ${T.gold}; color: ${T.goldLight}; }
+  .step-clickable:hover .step-label { color: ${T.goldLight}; }
 
   /* ── MAIN ── */
   .main {
@@ -639,6 +642,29 @@ const SAMPLE_EXAMS = [
   },
 ];
 
+// ── Strip markdown / non-speech tokens before sending text to TTS ──
+// Emphasis asterisks, code ticks, underscores, headers, bullets, arrows, and
+// stray symbols read awkwardly when spoken, so remove them and tidy spacing.
+function cleanForSpeech(text) {
+  return String(text)
+    .replace(/\*\*(.*?)\*\*/g, "$1")        // **bold**
+    .replace(/\*(.*?)\*/g, "$1")            // *italic*
+    .replace(/\*/g, "")                      // any stray asterisks
+    .replace(/`{1,3}([^`]*)`{1,3}/g, "$1")  // `code`
+    .replace(/_{1,3}([^_]+)_{1,3}/g, "$1")  // _emphasis_
+    .replace(/~{1,2}([^~]+)~{1,2}/g, "$1")  // ~strike~
+    .replace(/^#{1,6}\s*/gm, "")            // # headers
+    .replace(/^\s*[-•·]\s+/gm, "")          // list bullets
+    .replace(/[→←↔➜▶◀•·]/g, " ")           // arrows / bullets inline
+    .replace(/[|>#]/g, " ")                 // pipes, quote/heading marks
+    .replace(/\n{2,}/g, ". ")               // blank lines become a pause
+    .replace(/\n/g, " ")
+    .replace(/([.!?;:])\s*\.\s+/g, "$1 ")   // avoid doubled punctuation from the pause
+    .replace(/\s+([.,!?;:])/g, "$1")        // no space before punctuation
+    .replace(/\s{2,}/g, " ")                // collapse runs of spaces
+    .trim();
+}
+
 // ── Read a File as base64 (strips the data: prefix) ──
 function fileToBase64(file) {
   return new Promise((res, rej) => {
@@ -721,7 +747,77 @@ async function extractTopicsFromSlides(file, onProgress) {
 }
 
 // ── Simulated Claude API call for exam generation ──
-async function generateExams(onProgress) {
+// ── Difficulty character shared by all three generated variants ──
+const DIFFICULTY_META = {
+  recall: {
+    name: "Recall", bankKey: "balanced",
+    badge: "badge-conceptual", badgeLabel: "Recall-focused",
+    edsFocus: "Definition retrieval, shallow-hop checks",
+    blurb: "definitional accuracy and formula recall",
+  },
+  balanced: {
+    name: "Balanced", bankKey: "balanced",
+    badge: "badge-balanced", badgeLabel: "Balanced",
+    edsFocus: "Mixed recall and causal reasoning",
+    blurb: "a mix of recall and causal reasoning",
+  },
+  deep: {
+    name: "Deep", bankKey: "conceptual",
+    badge: "badge-applied", badgeLabel: "Depth-focused",
+    edsFocus: "High-hop traversal, causal chains",
+    blurb: "causal mechanisms and prerequisite chains",
+  },
+};
+
+// ── Three probing angles applied to whichever difficulty is selected ──
+const VARIANT_ANGLES = [
+  { key: "even", suffix: "Even Coverage", mode: "even",
+    desc: (m, n) => `Probes ${m.blurb} evenly across all ${n} selected concepts. Best when every topic should carry equal weight.` },
+  { key: "core", suffix: "Core Emphasis", mode: "front",
+    desc: (m) => `Same ${m.blurb}, weighted toward the foundational concepts so gaps in prerequisites surface first.` },
+  { key: "frontier", suffix: "Frontier Emphasis", mode: "back",
+    desc: (m) => `Same ${m.blurb}, weighted toward the advanced concepts to stretch stronger students.` },
+];
+
+// ── Distribute qCount questions across selected concepts (largest-remainder) ──
+function distributeQuestions(concepts, qCount, mode) {
+  const n = concepts.length;
+  if (n === 0) return [];
+  let w;
+  if (mode === "front")     w = concepts.map((_, i) => n - i);   // earlier topics heavier
+  else if (mode === "back") w = concepts.map((_, i) => i + 1);   // later topics heavier
+  else                      w = concepts.map(() => 1);           // even
+  const wSum = w.reduce((s, x) => s + x, 0) || 1;
+  const counts = w.map(x => Math.floor((x / wSum) * qCount));
+  let total = counts.reduce((s, x) => s + x, 0);
+  const rema = w.map((x, i) => ({ i, frac: (x / wSum) * qCount - counts[i] }))
+                .sort((a, b) => b.frac - a.frac);
+  let r = 0;
+  while (total < qCount) { counts[rema[r % n].i]++; total++; r++; }
+  return concepts.map((c, i) => ({ label: c.label, count: counts[i] }))
+                 .filter(d => d.count > 0);
+}
+
+// ── Build three variants of the selected difficulty from the chosen concepts ──
+function buildVariants(config) {
+  const { difficulty, selectedTopics, topics, qCount, examLen } = config;
+  const meta = DIFFICULTY_META[difficulty] || DIFFICULTY_META.balanced;
+  const concepts = (topics || []).filter(t => selectedTopics.includes(t.id));
+  return VARIANT_ANGLES.map(a => ({
+    id: `${difficulty}-${a.key}`,
+    bankKey: meta.bankKey,
+    title: `${meta.name} · ${a.suffix}`,
+    badge: meta.badge,
+    badgeLabel: meta.badgeLabel,
+    description: a.desc(meta, concepts.length),
+    qCount,
+    duration: `${examLen} min`,
+    edsFocus: meta.edsFocus,
+    distribution: distributeQuestions(concepts, qCount, a.mode),
+  }));
+}
+
+async function generateExams(config, onProgress) {
   const steps = [
     { msg: "Mapping concept graph…", pct: 20, delay: 700 },
     { msg: "Scoring prerequisite chains…", pct: 45, delay: 900 },
@@ -732,7 +828,7 @@ async function generateExams(onProgress) {
     await new Promise(r => setTimeout(r, s.delay));
     onProgress(s.msg, s.pct);
   }
-  return SAMPLE_EXAMS;
+  return buildVariants(config);
 }
 
 // ──────────────────────────────────────────────
@@ -965,12 +1061,13 @@ function StepConfigExam({ topics, onNext }) {
 
   async function handleGenerate() {
     setGenerating(true);
-    const exams = await generateExams((msg, pct) => {
+    const cfg = { qCount, examLen, difficulty, selectedTopics, topics };
+    const exams = await generateExams(cfg, (msg, pct) => {
       setStatusMsg(msg);
       setProgress(pct);
     });
     setGenerating(false);
-    onNext(exams, { qCount, examLen, difficulty, selectedTopics });
+    onNext(exams, cfg);
   }
 
   const diffs = [
@@ -1070,7 +1167,7 @@ function StepChooseExam({ exams, config, onNext }) {
     <div className="card">
       <div className="card-title">Choose Your Exam</div>
       <div className="card-subtitle">
-        Epistemy generated three exam variants with different question distributions. Select one to assign to your students.
+        Epistemy generated three variations of your <strong style={{ textTransform: "capitalize" }}>{config.difficulty}</strong> focus, each probing your selected concepts a little differently. Select one to assign to your students.
       </div>
 
       <div style={{ display: "flex", gap: 16, marginBottom: 20, fontSize: 13, color: T.inkLight }}>
@@ -1116,7 +1213,7 @@ function StepChooseExam({ exams, config, onNext }) {
         <div style={{ fontSize: 13, color: T.muted }}>Step 4 of 4</div>
         <button
           className="btn-primary"
-          onClick={() => onNext(selected)}
+          onClick={() => onNext(exams.find(e => e.id === selected))}
           disabled={!selected}
         >
           Assign This Exam →
@@ -1155,7 +1252,7 @@ const EXAM_QUESTIONS = {
 const MAX_TURNS = 5; // max probe turns per question before moving on
 
 function StudentPreview({ exam, config, onClose }) {
-  const questions = EXAM_QUESTIONS[exam.id] || EXAM_QUESTIONS.balanced;
+  const questions = EXAM_QUESTIONS[exam.bankKey] || EXAM_QUESTIONS[exam.id] || EXAM_QUESTIONS.balanced;
 
   // currentQ = which question we're on
   const [currentQ, setCurrentQ]     = useState(0);
@@ -1518,19 +1615,19 @@ Rules:
 }
 
 // ── Rubric export ──
-function exportRubric(chosen, config, weights) {
-  const wList = (weights && weights.length === chosen.distribution.length)
-    ? weights
-    : chosen.distribution.map(d => ({ label: d.label, weight: d.count }));
-  const wTotal = wList.reduce((s, w) => s + w.weight, 0) || 1;
+function exportRubric(chosen, config, rubric) {
+  const rows = (rubric && rubric.length === chosen.distribution.length)
+    ? rubric
+    : chosen.distribution.map(d => ({ label: d.label, count: d.count, weight: d.count }));
+  const totalQ = rows.reduce((s, r) => s + r.count, 0);
+  const wTotal = rows.reduce((s, r) => s + r.weight, 0) || 1;
 
-  const dist = chosen.distribution.map((d, i) => {
-    const w = wList[i] ? wList[i].weight : d.count;
-    const pct = Math.round((w / wTotal) * 100);
+  const dist = rows.map(r => {
+    const pct = Math.round((r.weight / wTotal) * 100);
     return `
     <tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;">${d.label}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;text-align:center;">${d.count}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;">${r.label}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;text-align:center;">${r.count}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e5dcc8;text-align:center;font-weight:700;color:#1B2A4A;">${pct}%</td>
     </tr>`;
   }).join("");
@@ -1577,7 +1674,7 @@ function exportRubric(chosen, config, weights) {
   <div class="rubric-body">
     <h2>Exam Configuration</h2>
     <div class="meta-grid">
-      <div class="meta-item"><div class="meta-label">Questions</div><div class="meta-value">${config.qCount}</div></div>
+      <div class="meta-item"><div class="meta-label">Questions</div><div class="meta-value">${totalQ}</div></div>
       <div class="meta-item"><div class="meta-label">Duration</div><div class="meta-value">${config.examLen} min</div></div>
       <div class="meta-item"><div class="meta-label">Difficulty</div><div class="meta-value" style="text-transform:capitalize">${config.difficulty}</div></div>
       <div class="meta-item"><div class="meta-label">Topics</div><div class="meta-value">${config.selectedTopics.length} covered</div></div>
@@ -1655,24 +1752,29 @@ function exportRubric(chosen, config, weights) {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
-function StepComplete({ examId, config }) {
-  const chosen = SAMPLE_EXAMS.find(e => e.id === examId);
+function StepComplete({ exam, config }) {
+  const chosen = exam;
   const [linkCopied, setLinkCopied] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showWeights, setShowWeights] = useState(false);
-  const [weights, setWeights] = useState(() =>
-    chosen ? chosen.distribution.map(d => ({ label: d.label, weight: d.count })) : []);
-  const examLink = `https://app.epistemy.ai/exam/haas-mba-finance-${examId}-${Date.now().toString(36)}`;
+  const [dist, setDist] = useState(() =>
+    chosen ? chosen.distribution.map(d => ({ label: d.label, count: d.count, weight: d.count })) : []);
+  const examLink = `https://app.epistemy.ai/exam/haas-mba-finance-${chosen?.id}-${Date.now().toString(36)}`;
 
-  const wTotal = weights.reduce((s, w) => s + w.weight, 0) || 1;
+  const totalQ = dist.reduce((s, r) => s + r.count, 0);
+  const wTotal = dist.reduce((s, r) => s + r.weight, 0) || 1;
+  const origTotal = chosen ? chosen.distribution.reduce((s, d) => s + d.count, 0) : 0;
   const isCustom = chosen
-    ? weights.some((w, i) => w.weight !== chosen.distribution[i].count)
+    ? dist.some((r, i) => r.count !== chosen.distribution[i].count || r.weight !== chosen.distribution[i].count)
     : false;
-  function setWeight(i, val) {
-    setWeights(prev => prev.map((w, idx) => idx === i ? { ...w, weight: val } : w));
+  function setCount(i, val) {
+    setDist(prev => prev.map((r, idx) => idx === i ? { ...r, count: Math.max(0, val) } : r));
   }
-  function resetWeights() {
-    if (chosen) setWeights(chosen.distribution.map(d => ({ label: d.label, weight: d.count })));
+  function setWeight(i, val) {
+    setDist(prev => prev.map((r, idx) => idx === i ? { ...r, weight: val } : r));
+  }
+  function resetDist() {
+    if (chosen) setDist(chosen.distribution.map(d => ({ label: d.label, count: d.count, weight: d.count })));
   }
 
   function handleShare() {
@@ -1710,7 +1812,7 @@ function StepComplete({ examId, config }) {
             </div>
             <div className="summary-row">
               <span>Questions</span>
-              <strong>{config.qCount}</strong>
+              <strong>{totalQ}</strong>
             </div>
             <div className="summary-row">
               <span>Duration</span>
@@ -1738,7 +1840,7 @@ function StepComplete({ examId, config }) {
             </div>
           )}
 
-          {/* Rubric weighting editor */}
+          {/* Question distribution & rubric weighting editor */}
           <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, marginBottom: 20,
             textAlign: "left", overflow: "hidden" }}>
             <button
@@ -1747,26 +1849,45 @@ function StepComplete({ examId, config }) {
                 padding: "12px 16px", cursor: "pointer", display: "flex",
                 alignItems: "center", justifyContent: "space-between",
                 fontSize: 14, fontWeight: 700, color: T.navy, fontFamily: "Inter, sans-serif" }}>
-              <span>⚖ Adjust Rubric Weighting{isCustom ? " · customized" : ""}</span>
+              <span>⚖ Question Distribution &amp; Rubric Weighting{isCustom ? " · customized" : ""}</span>
               <span style={{ color: T.muted }}>{showWeights ? "▲" : "▼"}</span>
             </button>
             {showWeights && (
               <div style={{ padding: "14px 16px", borderTop: `1px solid ${T.border}` }}>
                 <p style={{ fontSize: 12, color: T.inkLight, margin: "0 0 14px", lineHeight: 1.55 }}>
-                  Set how much each topic counts toward the final grade. Question counts stay fixed;
-                  this only changes scoring weight. Values normalize to 100%.
+                  Set the number of questions per topic and how much each topic counts toward the final
+                  grade. Score weights normalize to 100%.
                 </p>
-                {weights.map((w, i) => {
-                  const pct = Math.round((w.weight / wTotal) * 100);
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8,
+                  fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: T.muted }}>
+                  <span style={{ flex: 1 }}>Topic</span>
+                  <span style={{ width: 96, textAlign: "center" }}>Questions</span>
+                  <span style={{ width: 130, textAlign: "center" }}>Score Weight</span>
+                  <span style={{ width: 42, textAlign: "right" }}>%</span>
+                </div>
+                {dist.map((r, i) => {
+                  const pct = Math.round((r.weight / wTotal) * 100);
                   return (
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
-                      <span style={{ flex: 1, fontSize: 13, color: T.ink }}>{w.label}</span>
+                      <span style={{ flex: 1, fontSize: 13, color: T.ink }}>{r.label}</span>
+                      <div style={{ width: 96, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                        <button onClick={() => setCount(i, r.count - 1)} disabled={r.count <= 0}
+                          style={{ width: 24, height: 24, borderRadius: 6, border: `1px solid ${T.border}`,
+                            background: T.white, color: T.navy, fontSize: 16, lineHeight: 1,
+                            cursor: r.count <= 0 ? "default" : "pointer", opacity: r.count <= 0 ? 0.4 : 1,
+                            display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
+                        <span style={{ width: 20, textAlign: "center", fontSize: 14, fontWeight: 700, color: T.navy }}>{r.count}</span>
+                        <button onClick={() => setCount(i, r.count + 1)}
+                          style={{ width: 24, height: 24, borderRadius: 6, border: `1px solid ${T.border}`,
+                            background: T.white, color: T.navy, fontSize: 16, lineHeight: 1, cursor: "pointer",
+                            display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+                      </div>
                       <input
-                        type="range" min="0" max="10" step="1" value={w.weight}
+                        type="range" min="0" max="10" step="1" value={r.weight}
                         onChange={e => setWeight(i, Number(e.target.value))}
                         style={{ width: 130, accentColor: T.gold, cursor: "pointer" }}
                       />
-                      <span style={{ width: 46, textAlign: "right", fontSize: 13, fontWeight: 700, color: T.navy }}>
+                      <span style={{ width: 42, textAlign: "right", fontSize: 13, fontWeight: 700, color: T.navy }}>
                         {pct}%
                       </span>
                     </div>
@@ -1774,11 +1895,14 @@ function StepComplete({ examId, config }) {
                 })}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
                   marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
-                  <span style={{ fontSize: 11, color: T.muted }}>
-                    Applied to the exported rubric's Score Weight column.
+                  <span style={{ fontSize: 13, color: T.ink }}>
+                    Total questions: <strong style={{ color: T.navy }}>{totalQ}</strong>
+                    {totalQ !== origTotal && (
+                      <span style={{ color: T.gold, marginLeft: 8, fontSize: 12 }}>was {origTotal}</span>
+                    )}
                   </span>
                   <button
-                    onClick={resetWeights}
+                    onClick={resetDist}
                     disabled={!isCustom}
                     style={{ background: "transparent", border: `1px solid ${T.border}`,
                       borderRadius: 6, padding: "5px 12px", fontSize: 12, color: T.inkLight,
@@ -1797,7 +1921,7 @@ function StepComplete({ examId, config }) {
             <button className="btn-secondary" onClick={() => setShowPreview(true)}>
               👁 Preview as Student
             </button>
-            <button className="btn-secondary" onClick={() => exportRubric(chosen, config, weights)}>
+            <button className="btn-secondary" onClick={() => exportRubric(chosen, config, dist)}>
               📄 Export Rubric
             </button>
           </div>
@@ -2168,6 +2292,11 @@ function OralExam({ discipline, studentName, onBack }) {
   const [log, setLog]               = useState([]);
   const [examDone, setExamDone]     = useState(false);
 
+  // ── Socratic scaffolding: up to 3 turns per question ──
+  const MAX_Q_TURNS = 3;
+  const [qAttempts, setQAttempts]   = useState(0);   // answers given to the current question
+  const [qHistory, setQHistory]     = useState([]);  // {role:"answer"|"probe"} exchange for current question
+
   // ── STT state ──
   const [listening, setListening]   = useState(false);
   const [interimText, setInterimText] = useState("");
@@ -2249,7 +2378,7 @@ function OralExam({ discipline, studentName, onBack }) {
       const res = await fetch("/api/speak", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text: cleanForSpeech(text) }),
       });
       if (!res.ok) throw new Error(`TTS error ${res.status}`);
       const blob = await res.blob();
@@ -2331,48 +2460,83 @@ function OralExam({ discipline, studentName, onBack }) {
     setLoading(true);
     scrollBottom();
 
-    const isLast = qIndex >= N - 1;
-    const evalTurnIndex = newTurns.length; // index the evaluator bubble will occupy
+    const attempt = qAttempts + 1;                 // this answer's attempt number for the current question
+    const maxed = attempt >= MAX_Q_TURNS;          // reached the 3-turn cap
+    const isLastQ = qIndex >= N - 1;
+    const evalTurnIndex = newTurns.length;
 
-    const system = isLast
-      ? `You are an Epistemy oral examiner for ${discipline.title} at UC Berkeley Haas. The student was just asked: "${askedQ}". In 2 to 3 sentences, give a closing assessment of the whole exam: name one thing the student demonstrated well and one gap worth revisiting. Do not reveal full answers. End with "EXAM_COMPLETE".`
-      : `You are an Epistemy oral examiner for ${discipline.title} at UC Berkeley Haas. The student was just asked: "${askedQ}". In ONE or at most TWO sentences, acknowledge specifically what was strong or thin in their reasoning. Do not reveal the answer and do not ask a new question, another question follows automatically.`;
+    // Assess the answer against the current question and decide: move on, or scaffold with a smaller step.
+    const system =
+      `You are an Epistemy oral examiner for ${discipline.title} at UC Berkeley Haas, running a Socratic oral exam. ` +
+      `The current exam question is: "${askedQ}". ` +
+      `You scaffold: when an answer is incomplete, you do NOT give the answer away. Instead you ask ONE smaller guiding ` +
+      `sub-question about an intermediate concept or a single causal link, so the student can build toward the answer themselves. ` +
+      `Assess the student's most recent answer in the running exchange for THIS question. ` +
+      `Respond ONLY with minified JSON, no prose and no code fences: ` +
+      `{"adequate": true or false, "feedback": "at most one short sentence noting what was strong or thin, used when moving on", ` +
+      `"probe": "if not adequate, ONE short guiding sub-question toward an intermediate step; empty string if adequate"}`;
 
-    let feedback = "";
+    let ctx = `Exam question: ${askedQ}\n\n`;
+    if (qHistory.length) {
+      ctx += "Scaffolding so far on this question:\n";
+      for (const h of qHistory) {
+        ctx += (h.role === "probe" ? `Examiner sub-question: ${h.text}` : `Student: ${h.text}`) + "\n";
+      }
+      ctx += "\n";
+    }
+    ctx += `Student's latest answer: ${studentText}`;
+
+    let adequate = true, feedback = "", probe = "";
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
-          max_tokens: 1000,
+          max_tokens: 500,
           system,
-          messages: [{ role: "user", content: studentText }],
+          messages: [{ role: "user", content: ctx }],
         }),
       });
       const data = await res.json();
-      feedback = (data.content?.find(b => b.type === "text")?.text || "").trim();
+      let txt = (data.content?.find(b => b.type === "text")?.text || "").trim().replace(/```json|```/g, "").trim();
+      const s = txt.indexOf("{"), e = txt.lastIndexOf("}");
+      const parsed = JSON.parse(txt.slice(s, e + 1));
+      adequate = !!parsed.adequate;
+      feedback = (parsed.feedback || "").trim();
+      probe = (parsed.probe || "").trim();
     } catch {
-      feedback = "";
+      // Model unavailable (e.g. no server route on the deployment): fall back to advancing.
+      adequate = true; feedback = ""; probe = "";
     }
 
-    const done = isLast || feedback.includes("EXAM_COMPLETE");
-    feedback = feedback.replace("EXAM_COMPLETE", "").trim();
+    // Advance if the answer is adequate, the turn cap is hit, or there is no probe to give.
+    const advance = adequate || maxed || !probe;
 
-    const delta = Math.floor(6 + Math.random() * 8);
-    setEdsScore(prev => Math.min(99, prev + delta));
-    updateGraph(qIndex + 1);
-
-    let bubble;
-    if (done) {
-      // Closing turn: model summary when available, otherwise a single neutral close.
-      bubble = feedback || "That completes the exam. Your responses have been recorded, and your Epistemic Depth Score is shown on the right.";
+    let bubble, done = false;
+    if (advance) {
+      const delta = Math.floor(6 + Math.random() * 8);
+      setEdsScore(prev => Math.min(99, prev + delta));
+      updateGraph(qIndex + 1);
+      setQAttempts(0);
+      setQHistory([]);
+      if (isLastQ) {
+        done = true;
+        bubble = (feedback ? feedback + " " : "") +
+          "That completes the exam. Your responses have been recorded, and your Epistemic Depth Score is shown on the right.";
+      } else {
+        const nextIdx = qIndex + 1;
+        const nextQ = `Question ${nextIdx + 1}. ${bank[nextIdx].q}`;
+        bubble = feedback ? `${feedback}\n\n${nextQ}` : nextQ;
+        setQIndex(nextIdx);
+      }
     } else {
-      const nextIdx = qIndex + 1;
-      const nextQ = `Question ${nextIdx + 1}. ${bank[nextIdx].q}`;
-      // Prefix the brief evaluation only when the model actually returned one.
-      bubble = feedback ? `${feedback}\n\n${nextQ}` : nextQ;
-      setQIndex(nextIdx);
+      // Scaffold: pose a smaller sub-question and stay on the same question.
+      const delta = Math.floor(2 + Math.random() * 4);
+      setEdsScore(prev => Math.min(99, prev + delta));
+      setQAttempts(attempt);
+      setQHistory([...qHistory, { role: "answer", text: studentText }, { role: "probe", text: probe }]);
+      bubble = feedback ? `${feedback}\n\n${probe}` : probe;
     }
 
     setTurns(prev => {
@@ -2400,6 +2564,10 @@ function OralExam({ discipline, studentName, onBack }) {
   }
 
   const progressCount = examDone ? N : Math.min(qIndex + 1, N);
+  const completedQs = examDone ? N : qIndex;
+  const statusRight = examDone
+    ? "Exam complete"
+    : (qAttempts > 0 ? `Follow-up ${qAttempts} of ${MAX_Q_TURNS - 1}` : "In progress");
 
   return (
     <div style={{ width: "100%", maxWidth: 1100, margin: "0 auto", display: "flex", gap: 20, alignItems: "flex-start" }}>
@@ -2430,12 +2598,12 @@ function OralExam({ discipline, studentName, onBack }) {
           padding: "10px 20px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: T.muted, marginBottom: 5 }}>
             <span>Question {progressCount} of {N}</span>
-            <span>{examDone ? "Exam complete" : "In progress"}</span>
+            <span>{statusRight}</span>
           </div>
           <div style={{ display: "flex", gap: 3 }}>
             {Array.from({ length: N }).map((_, i) => (
               <div key={i} style={{ flex: 1, height: 4, borderRadius: 2,
-                background: i < answered ? (examDone ? T.success : T.gold) : T.border,
+                background: i < completedQs ? (examDone ? T.success : T.gold) : T.border,
                 transition: "background 0.3s" }} />
             ))}
           </div>
@@ -2572,76 +2740,76 @@ function OralExam({ discipline, studentName, onBack }) {
         )}
       </div>
 
-      {/* ── Right: EDS + Graph (behind the scenes) ── */}
-      <div style={{ width: 300, flexShrink: 0, display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* ── Right: single Behind the Scenes pane ── */}
+      <div style={{ width: 300, flexShrink: 0 }}>
+        <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, background: T.white, overflow: "hidden" }}>
 
-        {/* Behind-the-scenes label */}
-        <div style={{ border: `1px dashed ${T.gold}`, background: "#FBF6EA", borderRadius: 10,
-          padding: "9px 14px" }}>
-          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.03em", color: T.navy,
-            display: "flex", alignItems: "center", gap: 6 }}>
-            <span>🔍</span> [ Behind the Scenes ]
+          {/* Pane header */}
+          <div style={{ background: "#FBF6EA", borderBottom: `1px dashed ${T.gold}`, padding: "11px 16px" }}>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.03em", color: T.navy,
+              display: "flex", alignItems: "center", gap: 6 }}>
+              <span>🔍</span> Behind the Scenes
+            </div>
+            <div style={{ fontSize: 11, color: T.inkLight, marginTop: 4, lineHeight: 1.5 }}>
+              Instructor-facing analytics, hidden from the student during the exam.
+            </div>
           </div>
-          <div style={{ fontSize: 11, color: T.inkLight, marginTop: 4, lineHeight: 1.5 }}>
-            Concept graph, coverage, and EDS scoring. Instructor-facing, hidden from the student during the exam.
-          </div>
-        </div>
 
-        {/* EDS gauge card */}
-        <div style={{ background: T.white, border: `1px solid ${T.border}`, borderRadius: 12,
-          padding: "20px 16px", textAlign: "center" }}>
-          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.07em", color: T.muted, marginBottom: 12 }}>
-            Epistemic Depth Score
+          {/* EDS Score section */}
+          <div style={{ padding: "18px 16px", textAlign: "center", borderBottom: `1px solid ${T.border}` }}>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase",
+              letterSpacing: "0.07em", color: T.muted, marginBottom: 12 }}>
+              Epistemic Depth Score
+            </div>
+            <EDSGauge score={edsScore} />
+            <div style={{ marginTop: 14, fontSize: 12, color: T.muted, lineHeight: 1.5 }}>
+              Updates after each exchange based on concept graph traversal depth.
+            </div>
           </div>
-          <EDSGauge score={edsScore} />
-          <div style={{ marginTop: 14, fontSize: 12, color: T.muted, lineHeight: 1.5 }}>
-            Updates after each exchange based on concept graph traversal depth.
-          </div>
-        </div>
 
-        {/* Concept graph card */}
-        <div style={{ background: T.white, border: `1px solid ${T.border}`, borderRadius: 12,
-          padding: "16px 12px" }}>
-          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.07em", color: T.muted, marginBottom: 10, paddingLeft: 4 }}>
-            Concept Graph
+          {/* Concept Graph section */}
+          <div style={{ padding: "16px 12px", borderBottom: `1px solid ${T.border}` }}>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase",
+              letterSpacing: "0.07em", color: T.muted, marginBottom: 10, paddingLeft: 4 }}>
+              Concept Graph
+            </div>
+            <div style={{ height: 200, overflow: "hidden" }}>
+              <ConceptGraph discipline={discipline} traversed={traversed} />
+            </div>
+            {log.length > 0 && (
+              <div style={{ marginTop: 10, borderTop: `1px solid ${T.border}`, paddingTop: 10 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+                  color: T.muted, marginBottom: 6, letterSpacing: "0.06em" }}>Traversal Log</div>
+                <div style={{ maxHeight: 80, overflowY: "auto" }}>
+                  {log.map((l, i) => (
+                    <div key={i} style={{ fontSize: 11, color: T.gold, padding: "2px 0",
+                      fontFamily: "monospace" }}>{l}</div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-          <div style={{ height: 200, overflow: "hidden" }}>
-            <ConceptGraph discipline={discipline} traversed={traversed} />
-          </div>
-          {log.length > 0 && (
-            <div style={{ marginTop: 10, borderTop: `1px solid ${T.border}`, paddingTop: 10 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-                color: T.muted, marginBottom: 6, letterSpacing: "0.06em" }}>Traversal Log</div>
-              <div style={{ maxHeight: 80, overflowY: "auto" }}>
-                {log.map((l, i) => (
-                  <div key={i} style={{ fontSize: 11, color: T.gold, padding: "2px 0",
-                    fontFamily: "monospace" }}>{l}</div>
-                ))}
+
+          {/* Graph Coverage section */}
+          <div style={{ padding: "14px 16px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase",
+                letterSpacing: "0.07em", color: T.muted }}>Graph Coverage</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: T.navy }}>
+                {traversed.length}/{discipline.nodes.length}
               </div>
             </div>
-          )}
-        </div>
-
-        {/* Coverage meter */}
-        <div style={{ background: T.white, border: `1px solid ${T.border}`, borderRadius: 12, padding: "14px 16px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase",
-              letterSpacing: "0.07em", color: T.muted }}>Graph Coverage</div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: T.navy }}>
-              {traversed.length}/{discipline.nodes.length}
+            <div style={{ background: T.border, borderRadius: 4, height: 8, overflow: "hidden" }}>
+              <div style={{ height: "100%", borderRadius: 4,
+                width: `${(traversed.length / discipline.nodes.length) * 100}%`,
+                background: `linear-gradient(90deg, ${T.gold}, ${T.goldLight})`,
+                transition: "width 0.5s ease" }} />
+            </div>
+            <div style={{ fontSize: 11, color: T.muted, marginTop: 6 }}>
+              concepts probed in prerequisite chain
             </div>
           </div>
-          <div style={{ background: T.border, borderRadius: 4, height: 8, overflow: "hidden" }}>
-            <div style={{ height: "100%", borderRadius: 4,
-              width: `${(traversed.length / discipline.nodes.length) * 100}%`,
-              background: `linear-gradient(90deg, ${T.gold}, ${T.goldLight})`,
-              transition: "width 0.5s ease" }} />
-          </div>
-          <div style={{ fontSize: 11, color: T.muted, marginTop: 6 }}>
-            concepts probed in prerequisite chain
-          </div>
+
         </div>
       </div>
 
@@ -2717,6 +2885,19 @@ function InstructorApp({ onSwitchRole }) {
   const [chosenExam, setChosenExam] = useState(null);
   const [complete, setComplete] = useState(false);
 
+  // Effective position (5 = completion screen) and the furthest step you can jump back to.
+  const current = complete ? 5 : step;
+  const maxReached = complete ? 4 : step;
+  function goToStep(idx) {
+    if (idx >= 1 && idx <= maxReached) { setComplete(false); setStep(idx); }
+  }
+  function goBack() {
+    if (complete) { setComplete(false); setStep(4); return; }
+    if (step > 1) setStep(step - 1);
+  }
+  const canGoBack = complete || step > 1;
+  const backTarget = complete ? "Choose Exam" : (STEPS[step - 1] ? STEPS[step - 1].label : "");
+
   return (
     <div className="app">
       <header className="header">
@@ -2724,7 +2905,7 @@ function InstructorApp({ onSwitchRole }) {
         <div className="header-user">
           {step > 0 && (
             <>
-              <div className="avatar">SC</div>
+              <div className="avatar">MB</div>
               <span>Prof. Matteo Benetton</span>
             </>
           )}
@@ -2737,14 +2918,17 @@ function InstructorApp({ onSwitchRole }) {
         </div>
       </header>
 
-      {step > 0 && !complete && (
+      {step > 0 && (
         <nav className="stepper">
           {STEPS.slice(1).map((s, i) => {
             const idx = i + 1;
-            const status = step > idx ? "done" : step === idx ? "active" : "";
+            const status = current > idx ? "done" : current === idx ? "active" : "";
+            const clickable = idx <= maxReached;
             return (
-              <div className="step" key={idx}>
-                <div className={`step-circle ${status}`}>{step > idx ? "✓" : idx}</div>
+              <div className={`step${clickable ? " step-clickable" : ""}`} key={idx}
+                onClick={() => clickable && goToStep(idx)}
+                title={clickable ? `Go to ${s.label}` : undefined}>
+                <div className={`step-circle ${status}`}>{current > idx ? "✓" : idx}</div>
                 <div className={`step-label ${status}`}>{s.label}</div>
               </div>
             );
@@ -2752,13 +2936,24 @@ function InstructorApp({ onSwitchRole }) {
         </nav>
       )}
 
+      {canGoBack && (
+        <div style={{ maxWidth: 900, margin: "0 auto", padding: "16px 24px 0", width: "100%", boxSizing: "border-box" }}>
+          <button onClick={goBack}
+            style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 8,
+              padding: "7px 14px", fontSize: 13, color: T.inkLight, cursor: "pointer",
+              display: "inline-flex", alignItems: "center", gap: 6 }}>
+            ← Back{backTarget ? ` to ${backTarget}` : ""}
+          </button>
+        </div>
+      )}
+
       <main className="main">
         {step === 0 && <StepLogin onNext={() => setStep(1)} />}
-        {step === 1 && <StepOnboard onNext={() => setStep(2)} />}
-        {step === 2 && <StepUpload onNext={(t) => { setTopics(t); setStep(3); }} />}
-        {step === 3 && <StepConfigExam topics={topics} onNext={(e, cfg) => { setExams(e); setExamConfig(cfg); setStep(4); }} />}
-        {step === 4 && !complete && <StepChooseExam exams={exams} config={examConfig} onNext={(id) => { const ex = exams.find(e => e.id === id); ExamStore.trackId = id; ExamStore.trackLabel = ex ? ex.title : id; setChosenExam(id); setComplete(true); }} />}
-        {complete && <StepComplete examId={chosenExam} config={examConfig} />}
+        {step === 1 && !complete && <StepOnboard onNext={() => setStep(2)} />}
+        {step === 2 && !complete && <StepUpload onNext={(t) => { setTopics(t); setStep(3); }} />}
+        {step === 3 && !complete && <StepConfigExam topics={topics} onNext={(e, cfg) => { setExams(e); setExamConfig(cfg); setStep(4); }} />}
+        {step === 4 && !complete && <StepChooseExam exams={exams} config={examConfig} onNext={(exam) => { if (!exam) return; ExamStore.trackId = exam.bankKey; ExamStore.trackLabel = exam.title; setChosenExam(exam); setComplete(true); }} />}
+        {complete && <StepComplete exam={chosenExam} config={examConfig} />}
       </main>
     </div>
   );
