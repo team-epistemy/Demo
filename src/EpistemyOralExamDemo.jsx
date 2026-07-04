@@ -397,8 +397,11 @@ const css = `
   .exam-card.selected { border-color: ${T.navy}; background: #F5F7FB; }
   .exam-card-header {
     display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding-right: 34px;
     margin-bottom: 12px;
   }
   .exam-card-title {
@@ -642,6 +645,42 @@ const SAMPLE_EXAMS = [
   },
 ];
 
+// ── Model call. Prefers the app's own /api/chat route (works on the deployed
+// site and keeps the Anthropic key server-side); falls back to the direct call,
+// which only works inside the Claude preview. Returns the Anthropic JSON. ──
+async function callModel(payload) {
+  try {
+    const r = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (r.ok) {
+      const data = await r.json();
+      if (data && Array.isArray(data.content)) return data;
+    }
+  } catch { /* route not present, fall through */ }
+
+  const r2 = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return await r2.json();
+}
+
+// ── Rough local answer-quality estimate (0..1), used only when the model
+// evaluation is unavailable so that clear non-answers do not inflate EDS. ──
+function answerQuality(text) {
+  const t = String(text).trim().toLowerCase();
+  const words = t.split(/\s+/).filter(Boolean);
+  const nonAnswer =
+    words.length < 3 || t.length < 12 ||
+    /\b(not sure|unsure|no idea|i don'?t know|dont know|do not know|idk|dunno|no clue|not certain|no answer|nothing|pass|skip)\b/.test(t);
+  if (nonAnswer) return 0;
+  return Math.min(0.85, 0.25 + words.length / 60); // can't verify correctness locally, so cap it
+}
+
 // ── Strip markdown / non-speech tokens before sending text to TTS ──
 // Emphasis asterisks, code ticks, underscores, headers, bullets, arrows, and
 // stray symbols read awkwardly when spoken, so remove them and tidy spacing.
@@ -694,24 +733,19 @@ async function extractTopicsFromSlides(file, onProgress) {
       const b64 = await fileToBase64(file);
       onProgress("Identifying concept clusters…", 40);
 
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1000,
-          messages: [{
-            role: "user",
-            content: [
-              { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } },
-              { type: "text", text: "You are building the concept map for an oral exam. From this course material, extract the 8 to 14 core topics a student would be examined on. Return ONLY a JSON array, no prose, no markdown fences, each item {\"label\": \"...\"}. Labels are short (2 to 5 words), noun phrases, no numbering." },
-            ],
-          }],
-        }),
+      const data = await callModel({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1000,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } },
+            { type: "text", text: "You are building the concept map for an oral exam. From this course material, extract the 8 to 14 core topics a student would be examined on. Return ONLY a JSON array, no prose, no markdown fences, each item {\"label\": \"...\"}. Labels are short (2 to 5 words), noun phrases, no numbering." },
+          ],
+        }],
       });
 
       onProgress("Building prerequisite graph…", 70);
-      const data = await response.json();
       const text = (data.content || [])
         .filter(b => b.type === "text").map(b => b.text).join("\n")
         .replace(/```json|```/g, "").trim();
@@ -1249,7 +1283,7 @@ const EXAM_QUESTIONS = {
 };
 
 // ── Student Preview Overlay — multi-turn Socratic dialogue per question ──
-const MAX_TURNS = 5; // max probe turns per question before moving on
+const MAX_TURNS = 3; // max turns per question before moving on
 
 function StudentPreview({ exam, config, onClose }) {
   const questions = EXAM_QUESTIONS[exam.bankKey] || EXAM_QUESTIONS[exam.id] || EXAM_QUESTIONS.balanced;
@@ -1314,57 +1348,75 @@ function StudentPreview({ exam, config, onClose }) {
     const studentText = draft.trim();
     setDraft("");
 
-    // Append student turn immediately
+    const priorTurns = turns;
     const newTurns = [...turns, { role: "student", text: studentText }];
     setTurns(newTurns);
     setLoading(true);
     scrollToBottom();
 
-    const nextStudentTurn = newTurns.filter(t => t.role === "student").length;
-    const isLastAllowedTurn = nextStudentTurn >= MAX_TURNS;
+    const attempt = newTurns.filter(t => t.role === "student").length; // answers to this question
+    const maxed = attempt >= MAX_TURNS;                                 // 3-turn cap
 
-    const systemPrompt = `You are an Epistemy oral exam evaluator for MBA Finance Core at UC Berkeley Haas School of Business.
+    const system =
+      `You are an Epistemy oral examiner for MBA Finance Core at UC Berkeley Haas, running a Socratic oral exam. ` +
+      `The current exam question is: "${q.q}" (topic: ${q.topic}). ` +
+      `You scaffold: when an answer is incomplete, you do NOT give the answer away. Instead you ask ONE smaller guiding ` +
+      `sub-question about an intermediate concept or a single causal link, so the student can build toward the answer themselves. ` +
+      `Assess the student's most recent answer in the running exchange for THIS question. ` +
+      `Respond ONLY with minified JSON, no prose and no code fences: ` +
+      `{"adequate": true or false, "feedback": "at most one short sentence noting what was strong or thin, used when moving on", ` +
+      `"probe": "if not adequate, ONE short guiding sub-question toward an intermediate step; empty string if adequate"}`;
 
-Your role is to conduct a Socratic dialogue to probe the student's epistemic depth — their ability to explain causal mechanisms, prerequisite concepts, and underlying reasoning, not just surface recall.
+    let ctx = `Exam question: ${q.q}\n\n`;
+    if (priorTurns.length) {
+      ctx += "Exchange so far on this question:\n";
+      for (const t of priorTurns) {
+        ctx += (t.role === "evaluator" ? `Examiner: ${t.text}` : `Student: ${t.text}`) + "\n";
+      }
+      ctx += "\n";
+    }
+    ctx += `Student's latest answer: ${studentText}`;
 
-Rules:
-- Each response must be 2–4 sentences maximum. Never lecture or explain — only probe.
-- Acknowledge briefly what was correct or partially correct (1 sentence), then ask exactly ONE follow-up question that probes a prerequisite, causal chain, or assumption the student hasn't yet addressed.
-- Escalate depth with each turn: move from definition → mechanism → causation → edge case → implication.
-- If the student has demonstrated strong understanding across ${MAX_TURNS} turns, close the question with a brief affirmation and signal: end with "QUESTION_COMPLETE".
-- If this is turn ${nextStudentTurn} of ${MAX_TURNS} (the final allowed turn), close the question regardless: briefly summarize what was demonstrated and what gap remains, then end with "QUESTION_COMPLETE".
-- Never give away the answer. Never ask compound questions.
-- Tone: rigorous but collegial, like a faculty member in office hours.`;
-
+    let adequate = true, feedback = "", probe = "", modelOk = false;
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1000,
-          system: systemPrompt,
-          messages: buildMessages(studentText),
-        }),
+      const data = await callModel({
+        model: "claude-sonnet-4-6",
+        max_tokens: 500,
+        system,
+        messages: [{ role: "user", content: ctx }],
       });
-      const data = await res.json();
-      let text = data.content?.find(b => b.type === "text")?.text
-        || "Good attempt. Let's dig deeper — what's the underlying mechanism that drives this relationship?";
-
-      const isDone = text.includes("QUESTION_COMPLETE") || isLastAllowedTurn;
-      text = text.replace("QUESTION_COMPLETE", "").trim();
-
-      // Update EDS: roughly +8–15 per student turn depending on turn depth
-      setEdsScore(prev => Math.min(99, prev + Math.floor(8 + nextStudentTurn * 2)));
-
-      setTurns(prev => [...prev, { role: "evaluator", text }]);
-      if (isDone) setQuestionDone(true);
+      let txt = (data.content?.find(b => b.type === "text")?.text || "").trim().replace(/```json|```/g, "").trim();
+      const s = txt.indexOf("{"), e = txt.lastIndexOf("}");
+      const parsed = JSON.parse(txt.slice(s, e + 1));
+      adequate = !!parsed.adequate;
+      feedback = (parsed.feedback || "").trim();
+      probe = (parsed.probe || "").trim();
+      modelOk = true;
     } catch {
-      const fallback = isLastAllowedTurn
-        ? "Good effort across this question. We'll move on — the concept graph will reflect what you've demonstrated here."
-        : "Interesting angle. Now — what's the prerequisite assumption that has to hold for that reasoning to be valid?";
-      setTurns(prev => [...prev, { role: "evaluator", text: fallback }]);
-      if (isLastAllowedTurn) setQuestionDone(true);
+      // Model unavailable: move on rather than repeat a canned probe.
+      adequate = true; feedback = ""; probe = ""; modelOk = false;
+    }
+
+    // EDS reflects the evaluation, not a blind increment.
+    let edsDelta;
+    if (modelOk) {
+      if (adequate)   edsDelta = 8 + Math.floor(Math.random() * 6);
+      else if (probe) edsDelta = answerQuality(studentText) > 0 ? 3 : 0;
+      else            edsDelta = 0;
+    } else {
+      edsDelta = Math.round(answerQuality(studentText) * 12); // 0 for non-answers
+    }
+
+    const close = adequate || maxed || !probe;
+    if (close) {
+      setEdsScore(prev => Math.min(99, prev + edsDelta));
+      const bubble = feedback || "Good work on this question. Moving on.";
+      setTurns(prev => [...prev, { role: "evaluator", text: bubble }]);
+      setQuestionDone(true);
+    } else {
+      setEdsScore(prev => Math.min(99, prev + edsDelta));
+      const bubble = feedback ? `${feedback}\n\n${probe}` : probe;
+      setTurns(prev => [...prev, { role: "evaluator", text: bubble }]);
     }
 
     setLoading(false);
@@ -2486,38 +2538,48 @@ function OralExam({ discipline, studentName, onBack }) {
     }
     ctx += `Student's latest answer: ${studentText}`;
 
-    let adequate = true, feedback = "", probe = "";
+    let adequate = true, feedback = "", probe = "", modelOk = false;
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 500,
-          system,
-          messages: [{ role: "user", content: ctx }],
-        }),
+      const data = await callModel({
+        model: "claude-sonnet-4-6",
+        max_tokens: 500,
+        system,
+        messages: [{ role: "user", content: ctx }],
       });
-      const data = await res.json();
       let txt = (data.content?.find(b => b.type === "text")?.text || "").trim().replace(/```json|```/g, "").trim();
       const s = txt.indexOf("{"), e = txt.lastIndexOf("}");
       const parsed = JSON.parse(txt.slice(s, e + 1));
       adequate = !!parsed.adequate;
       feedback = (parsed.feedback || "").trim();
       probe = (parsed.probe || "").trim();
+      modelOk = true;
     } catch {
-      // Model unavailable (e.g. no server route on the deployment): fall back to advancing.
+      // Model unavailable (no server route on the deployment): fall back to advancing,
+      // but score from a local heuristic so non-answers do not raise EDS.
+      const qual = answerQuality(studentText);
       adequate = true; feedback = ""; probe = "";
+      modelOk = false;
+      if (qual === 0) { /* clear non-answer: no credit below */ }
     }
+
+    // EDS reflects the evaluation, not a blind increment.
+    let edsDelta;
+    if (modelOk) {
+      if (adequate)      edsDelta = 8 + Math.floor(Math.random() * 6);           // solid answer
+      else if (probe)    edsDelta = answerQuality(studentText) > 0 ? 3 : 0;      // partial, engaged
+      else               edsDelta = 0;
+    } else {
+      edsDelta = Math.round(answerQuality(studentText) * 12);                    // 0 for non-answers
+    }
+    const earned = edsDelta > 0;
 
     // Advance if the answer is adequate, the turn cap is hit, or there is no probe to give.
     const advance = adequate || maxed || !probe;
 
     let bubble, done = false;
     if (advance) {
-      const delta = Math.floor(6 + Math.random() * 8);
-      setEdsScore(prev => Math.min(99, prev + delta));
-      updateGraph(qIndex + 1);
+      setEdsScore(prev => Math.min(99, prev + edsDelta));
+      if (earned) updateGraph(qIndex + 1);
       setQAttempts(0);
       setQHistory([]);
       if (isLastQ) {
@@ -2532,8 +2594,7 @@ function OralExam({ discipline, studentName, onBack }) {
       }
     } else {
       // Scaffold: pose a smaller sub-question and stay on the same question.
-      const delta = Math.floor(2 + Math.random() * 4);
-      setEdsScore(prev => Math.min(99, prev + delta));
+      setEdsScore(prev => Math.min(99, prev + edsDelta));
       setQAttempts(attempt);
       setQHistory([...qHistory, { role: "answer", text: studentText }, { role: "probe", text: probe }]);
       bubble = feedback ? `${feedback}\n\n${probe}` : probe;
