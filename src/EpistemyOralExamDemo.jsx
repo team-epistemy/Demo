@@ -1002,7 +1002,7 @@ function StepLogin({ onNext }) {
   return (
     <div style={{ maxWidth: 460, margin: "0 auto", width: "100%" }}>
       <div className="login-logo">
-        <h1>Epistemy<span>.</span>AI</h1>
+        <h1>Epistemy</h1>
         <p>depth beyond recall</p>
       </div>
       <div className="card">
@@ -1039,7 +1039,7 @@ function StepOnboard({ onNext }) {
     <div className="card">
       <div className="card-title">Set Up Your Course</div>
       <div className="card-subtitle">
-        Tell Epistemy about your subject so it can build a tailored concept graph and calibrate the EDS scoring model.
+        Let Epistemy know about your subject, so it can build a tailored assessment and calibrate scoring accordingly.
       </div>
 
       <label>Course Name</label>
@@ -1227,15 +1227,12 @@ function StepConfigExam({ topics, onNext }) {
   const diffs = [
     { id: "recall", label: "Recall", sub: "Definitions & facts" },
     { id: "balanced", label: "Balanced", sub: "Recall + reasoning" },
-    { id: "deep", label: "Deep", sub: "Causal chains only" },
+    { id: "deep", label: "Deep", sub: "Causal reasoning" },
   ];
 
   return (
     <div className="card">
       <div className="card-title">Configure the Exam</div>
-      <div className="card-subtitle">
-        Choose which topics to include, set length and question count, and select the epistemic depth focus. Epistemy builds the exam from your selections. You can review and fine-tune the questions on the next screen.
-      </div>
 
       <div className="section-label">Topics to Include
         <span style={{ marginLeft: 10, fontWeight: 400, textTransform: "none", letterSpacing: 0, color: T.muted }}>
@@ -1274,7 +1271,7 @@ function StepConfigExam({ topics, onNext }) {
         </div>
       </div>
 
-      <label>Difficulty Focus</label>
+      <label>Assessment Focus</label>
       <div className="difficulty-row">
         {diffs.map(d => (
           <button
@@ -1496,7 +1493,7 @@ function exportRubric(chosen, config, dist, qScores) {
 <div class="page">
   <div class="rubric-header">
     <h1>${chosen.title} · Scoring Rubric</h1>
-    <p>Epistemy.AI · MBA Finance Core · Prof. Matteo Benetton · UC Berkeley Haas · ${new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})}</p>
+    <p>Epistemy · MBA Finance Core · Prof. Matteo Benetton · UC Berkeley Haas · ${new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})}</p>
   </div>
   <div class="rubric-body">
     <h2>Exam Configuration</h2>
@@ -1585,7 +1582,7 @@ function QuestionTranscript({ questions, scoreTotal, setQScore, resetScores, onC
         <div style={{ background: T.navy, padding: "16px 22px", display: "flex",
           alignItems: "center", justifyContent: "space-between" }}>
           <div>
-            <div style={{ fontFamily: "DM Serif Display, serif", fontSize: 20, color: "white" }}>Question Transcript &amp; Scoring</div>
+            <div style={{ fontFamily: "DM Serif Display, serif", fontSize: 20, color: "white" }}>Scoring Weights</div>
             <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, marginTop: 2 }}>
               Every question the student will be asked, with the score attributed to it.
             </div>
@@ -1843,14 +1840,11 @@ function StepComplete({ exam, config }) {
           </div>
 
           <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-            <button className="btn-primary" onClick={handleShare}>
-              {linkCopied ? "✓ Copied!" : "🔗 Share Exam Link"}
-            </button>
             <button className="btn-secondary" onClick={() => setShowPreview(true)}>
               👁 Preview as Student
             </button>
             <button className="btn-secondary" onClick={() => setShowTranscript(true)}>
-              📝 Question Transcript
+              ⚖ Scoring Weights
             </button>
             <button className="btn-secondary" onClick={() => exportRubric(chosen, config, distForExport, transcriptQs)}>
               📄 Export Rubric
@@ -2133,7 +2127,7 @@ function StudentLogin({ onLogin }) {
   return (
     <div style={{ maxWidth: 460, margin: "0 auto", width: "100%" }}>
       <div className="login-logo">
-        <h1>Epistemy<span>.</span>AI</h1>
+        <h1>Epistemy</h1>
         <p>depth beyond recall</p>
       </div>
       <div className="card">
@@ -2774,7 +2768,7 @@ function StudentApp({ onSwitchRole }) {
   return (
     <div className="app">
       <header className="header">
-        <div className="header-logo">Epistemy<span>.</span>AI</div>
+        <div className="header-logo">Epistemy</div>
         <div className="header-user">
           {view !== "login" && (
             <>
@@ -2842,7 +2836,7 @@ function InstructorApp({ onSwitchRole }) {
   return (
     <div className="app">
       <header className="header">
-        <div className="header-logo">Epistemy<span>.</span>AI</div>
+        <div className="header-logo">Epistemy</div>
         <div className="header-user">
           {step > 0 && (
             <>
@@ -2937,7 +2931,7 @@ function RoleSelect({ onSelect }) {
               role: "instructor",
               icon: "🎓",
               title: "Instructor",
-              desc: "Build and configure oral exams. Upload course material, generate exam variants, and assign to students.",
+              desc: "Build and configure oral assessments. Upload course material, generate assessment variants, and assign to students.",
               cta: "Enter as Instructor",
               accent: T.gold,
             },
@@ -2945,7 +2939,7 @@ function RoleSelect({ onSelect }) {
               role: "student",
               icon: "📖",
               title: "Student",
-              desc: "Take an adaptive Socratic oral exam. Your Epistemic Depth Score updates in real time as you respond.",
+              desc: "Take an adaptive Socratic oral assessment. Your Epistemic Depth Score updates in real time as you respond.",
               cta: "Enter as Student",
               accent: "#4A90D9",
             },
