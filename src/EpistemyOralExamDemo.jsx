@@ -681,6 +681,13 @@ function answerQuality(text) {
   return Math.min(0.85, 0.25 + words.length / 60); // can't verify correctness locally, so cap it
 }
 
+// Detect when the student is asking for the question to be restated/rephrased/
+// repeated/clarified rather than actually answering it.
+function isClarificationRequest(text) {
+  const t = String(text).trim().toLowerCase();
+  return /\b(rephrase|re-?state|re-?word|repeat( the| that)?|say (that|it) again|come again|clarif(y|ication)|what do you mean|didn'?t (get|understand)|don'?t understand|do not understand|explain the question|what('?s| is) the question|unclear|confus(ed|ing)|not clear)\b/.test(t);
+}
+
 // ── Strip markdown / non-speech tokens before sending text to TTS ──
 // Emphasis asterisks, code ticks, underscores, headers, bullets, arrows, and
 // stray symbols read awkwardly when spoken, so remove them and tidy spacing.
@@ -2349,7 +2356,9 @@ function OralExam({ discipline, studentName, onBack, previewMode }) {
     const askedQ = bank[current].q;
     const history = cur.history;
     setDraft(""); setInterimText("");
-    setQData(prev=>prev.map((q,idx)=> idx===current ? {...q, turns:[...q.turns,{role:"student",text:studentText}], attempted:true } : q));
+    // Append the student's message. We only mark the question "attempted" once we
+    // know it was an actual answer (not a clarification request), below.
+    setQData(prev=>prev.map((q,idx)=> idx===current ? {...q, turns:[...q.turns,{role:"student",text:studentText}] } : q));
     setLoading(true); scrollBottom();
 
     const attempt = cur.attempts + 1;
@@ -2360,25 +2369,43 @@ function OralExam({ discipline, studentName, onBack, previewMode }) {
       `The current exam question is: "${askedQ}". ` +
       `You scaffold: when an answer is incomplete, you do NOT give the answer away. Instead you ask ONE smaller guiding ` +
       `sub-question about an intermediate concept or a single causal link, so the student can build toward the answer themselves. ` +
-      `First decide whether the student genuinely attempted to answer THIS question with relevant content. ` +
+      `First, detect whether the student is NOT answering but instead asking you to rephrase, reword, repeat, restate, or clarify the ` +
+      `question (for example "can you rephrase the question", "what do you mean", "I don't understand the question"). If so, set ` +
+      `clarify=true and put a clearly reworded, simpler restatement of the CURRENT exam question in "rephrase". A request to rephrase ` +
+      `or repeat the question is NOT an answer, NOT a refusal, and must not be scored. ` +
+      `Otherwise, decide whether the student genuinely attempted to answer THIS question with relevant content. ` +
       `Treat "I don't know", "not sure", "no idea", blank replies, gibberish, off-topic answers, refusals, or asking to skip as NOT answered. ` +
       `Assess the student's most recent answer in the running exchange for THIS question. "adequate" may be true only if "answered" is true. ` +
       `Respond ONLY with minified JSON, no prose and no code fences: ` +
-      `{"answered": true or false, "adequate": true or false, "feedback": "at most one short sentence noting what was strong or thin, used when moving on", ` +
+      `{"clarify": true or false, "rephrase": "a reworded, simpler restatement of the current question; used only when clarify is true, empty otherwise", ` +
+      `"answered": true or false, "adequate": true or false, "feedback": "at most one short sentence noting what was strong or thin, used when moving on", ` +
       `"probe": "if not adequate, ONE short guiding sub-question toward an intermediate step; empty string if adequate"}`;
 
     let ctx = `Exam question: ${askedQ}\n\n`;
     if(history.length){ ctx += "Scaffolding so far on this question:\n"; for(const h of history){ ctx += (h.role==="probe"?`Examiner sub-question: ${h.text}`:`Student: ${h.text}`)+"\n"; } ctx+="\n"; }
-    ctx += `Student's latest answer: ${studentText}`;
+    ctx += `Student's latest message: ${studentText}`;
 
-    let answered=true, adequate=true, feedback="", probe="", modelOk=false;
+    let clarify=false, rephrase="", answered=true, adequate=true, feedback="", probe="", modelOk=false;
     try{
       const data = await callModel({ model:"claude-sonnet-4-6", max_tokens:500, system, messages:[{role:"user",content:ctx}] });
       let txt=(data.content?.find(b=>b.type==="text")?.text||"").trim().replace(/```json|```/g,"").trim();
       const s=txt.indexOf("{"), e=txt.lastIndexOf("}"); const parsed=JSON.parse(txt.slice(s,e+1));
       adequate=!!parsed.adequate; answered=("answered"in parsed)?!!parsed.answered:answerQuality(studentText)>0;
-      feedback=(parsed.feedback||"").trim(); probe=(parsed.probe||"").trim(); modelOk=true;
-    }catch{ answered=answerQuality(studentText)>0; adequate=true; feedback=""; probe=""; modelOk=false; }
+      feedback=(parsed.feedback||"").trim(); probe=(parsed.probe||"").trim();
+      rephrase=(parsed.rephrase||"").trim();
+      clarify=!!parsed.clarify || (!answered && isClarificationRequest(studentText));
+      modelOk=true;
+    }catch{ clarify=isClarificationRequest(studentText); answered=answerQuality(studentText)>0; adequate=true; feedback=""; probe=""; modelOk=false; }
+
+    // Clarification request: restate the question, do NOT record an answer,
+    // do NOT mark the question attempted/done, and do NOT consume a turn.
+    if(clarify){
+      const rephraseText = rephrase || `Sure, let me put the question another way:\n\n${askedQ}`;
+      setQData(prev=>prev.map((q,idx)=> idx===current ? {...q, turns:[...q.turns,{role:"evaluator",text:rephraseText}] } : q));
+      setLoading(false);
+      setTimeout(()=>{ scrollBottom(); }, 200);
+      return;
+    }
 
     let edsDelta;
     if(modelOk){ if(!answered) edsDelta=0; else if(adequate) edsDelta=8+Math.floor(Math.random()*6); else if(probe) edsDelta=3; else edsDelta=0; }
@@ -2394,6 +2421,7 @@ function OralExam({ discipline, studentName, onBack, previewMode }) {
         ...q,
         turns: [...q.turns, {role:"evaluator", text:bubble}],
         attempts: attempt,
+        attempted: true,
         done: advance ? true : q.done,
         score: Math.min(45, q.score + edsDelta),
         history: newHist,
