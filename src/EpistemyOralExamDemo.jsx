@@ -1751,7 +1751,6 @@ function StepComplete({ exam, config }) {
             <div className="summary-row"><span>Questions</span><strong>{totalQ}</strong></div>
             <div className="summary-row"><span>Duration</span><strong>{config.examLen} minutes</strong></div>
             <div className="summary-row"><span>Topics covered</span><strong>{config.selectedTopics.length} topics</strong></div>
-            <div className="summary-row"><span>Scoring model</span><strong>Epistemic Depth Score (EDS)</strong></div>
           </div>
 
           {linkCopied && (
