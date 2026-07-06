@@ -730,6 +730,7 @@ function slugify(label, i) {
 // Real PDFs are sent to the model as a document block. Anything else (or any
 // failure) falls back to the sample topic list so the demo never dead-ends.
 async function extractTopicsFromSlides(file, onProgress) {
+  TopicQuestions = {}; // reset; only a successful real-PDF extraction repopulates this
   const isRealPdf =
     file && typeof file.arrayBuffer === "function" &&
     (file.type === "application/pdf" || /\.pdf$/i.test(file.name || ""));
@@ -742,12 +743,12 @@ async function extractTopicsFromSlides(file, onProgress) {
 
       const data = await callModel({
         model: "claude-sonnet-4-6",
-        max_tokens: 1000,
+        max_tokens: 3000,
         messages: [{
           role: "user",
           content: [
             { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } },
-            { type: "text", text: "You are building the concept map for an oral exam. From this course material, extract the 8 to 14 core topics a student would be examined on. Return ONLY a JSON array, no prose, no markdown fences, each item {\"label\": \"...\"}. Labels are short (2 to 5 words), noun phrases, no numbering." },
+            { type: "text", text: "You are building the concept map for an oral exam. From THIS course material only, extract the 8 to 14 core topics a student would be examined on. Do not introduce topics that are not present in the material. For each topic, also write 4 oral-exam questions grounded strictly in the material that probe understanding of that topic. Return ONLY a JSON array, no prose, no markdown fences, each item {\"label\": \"...\", \"questions\": [\"...\", \"...\", \"...\", \"...\"]}. Labels are short (2 to 5 words), noun phrases, no numbering." },
           ],
         }],
       });
@@ -760,19 +761,32 @@ async function extractTopicsFromSlides(file, onProgress) {
       const start = text.indexOf("["), end = text.lastIndexOf("]");
       const parsed = JSON.parse(text.slice(start, end + 1));
       const topics = parsed
-        .map((t, i) => ({ id: slugify(t.label, i), label: String(t.label).trim() }))
+        .map((t, i) => {
+          const id = slugify(t.label, i);
+          const label = String(t.label).trim();
+          const questions = Array.isArray(t.questions)
+            ? t.questions.map(q => String(q).trim()).filter(Boolean)
+            : [];
+          return { id, label, questions };
+        })
         .filter(t => t.label);
 
       if (!topics.length) throw new Error("empty");
+
+      // Keep the exam grounded in the uploaded slides: store the extracted questions.
+      topics.forEach(t => { if (t.questions.length) TopicQuestions[t.id] = t.questions; });
+      TopicsSource = "slides";
+
       onProgress("Scoring epistemic depth…", 92);
       await new Promise(r => setTimeout(r, 400));
-      return topics;
+      return topics.map(({ id, label }) => ({ id, label }));
     } catch (e) {
       // fall through to the sample list below
     }
   }
 
   // Fallback: sample-slides path, non-PDF uploads, or any extraction failure
+  TopicsSource = isRealPdf ? "sample-fallback" : "sample";
   const steps = [
     { msg: "Parsing slide content…", pct: 15, delay: 500 },
     { msg: "Identifying concept clusters…", pct: 35, delay: 700 },
@@ -955,10 +969,25 @@ const GENERIC_EXTRA = [
 
 // A topic's full selectable bank: real pooled questions first, then generic
 // extensions, so counts can grow well beyond the base pool.
+// Questions extracted from the uploaded slides, keyed by topic id. Populated by
+// extractTopicsFromSlides on a successful real-PDF extraction, and reset otherwise.
+// This is what keeps a real exam grounded in the uploaded material rather than the
+// built-in sample pool (which is only appropriate for the demo sample slides).
+let TopicQuestions = {};
+// Where the current topic list came from: "slides" (extracted from the upload),
+// "sample-fallback" (a real PDF was uploaded but extraction failed), or "sample".
+let TopicsSource = "sample";
+
+// Resolve a topic's questions: slide-extracted first, then the sample pool (only
+// matches the built-in MBA_TOPICS ids), then generic questions built from the label.
+function questionsForTopic(id, label) {
+  if (TopicQuestions[id] && TopicQuestions[id].length) return TopicQuestions[id];
+  if (QUESTION_POOL[id] && QUESTION_POOL[id].length) return QUESTION_POOL[id];
+  return GENERIC_Q.map(fn => fn(label));
+}
+
 function topicBank(id, label) {
-  const base = (QUESTION_POOL[id] && QUESTION_POOL[id].length)
-    ? QUESTION_POOL[id].slice()
-    : GENERIC_Q.map(fn => fn(label));
+  const base = questionsForTopic(id, label).slice();
   const extra = GENERIC_EXTRA.map(fn => fn(label));
   const seen = new Set();
   return base.concat(extra).filter(q => (seen.has(q) ? false : (seen.add(q), true)));
@@ -968,10 +997,10 @@ function topicBank(id, label) {
 function assembleExamQuestions(distribution) {
   const out = [];
   (distribution || []).forEach(d => {
-    const pool = QUESTION_POOL[d.id] || null;
+    const pool = questionsForTopic(d.id, d.label);
     const n = d.count || 0;
     for (let i = 0; i < n; i++) {
-      const q = pool ? pool[i % pool.length] : GENERIC_Q[i % GENERIC_Q.length](d.label);
+      const q = pool.length ? pool[i % pool.length] : GENERIC_Q[i % GENERIC_Q.length](d.label);
       out.push({ topic: d.label, q });
     }
   });
@@ -1189,9 +1218,18 @@ function StepUpload({ onNext }) {
             ))}
           </div>
           <div className="card-footer">
-            <div style={{ fontSize: 13, color: T.muted }}>{topics.length} topics extracted</div>
+            <div style={{ fontSize: 13, color: T.muted }}>
+              {topics.length} topics {TopicsSource === "slides" ? "extracted from your slides" : "loaded"}
+            </div>
             <button className="btn-primary" onClick={() => onNext(topics)}>Configure Exam →</button>
           </div>
+          {TopicsSource === "sample-fallback" && (
+            <div style={{ marginTop: 10, fontSize: 12, color: T.inkLight, background: "#FFFBF0",
+              border: `1px dashed ${T.gold}`, borderRadius: 8, padding: "9px 12px", lineHeight: 1.5 }}>
+              Couldn't read that document, so these are sample topics, not your slides. This usually means the
+              extraction service isn't reachable. Once it is, the topics and questions come straight from your upload.
+            </div>
+          )}
         </>
       )}
 
