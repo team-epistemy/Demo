@@ -748,7 +748,7 @@ async function extractTopicsFromSlides(file, onProgress) {
           role: "user",
           content: [
             { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } },
-            { type: "text", text: "You are building the concept map for an oral exam. From THIS course material only, extract the 8 to 14 core topics a student would be examined on. Do not introduce topics that are not present in the material. For each topic, also write 4 oral-exam questions grounded strictly in the material that probe understanding of that topic. Return ONLY a JSON array, no prose, no markdown fences, each item {\"label\": \"...\", \"questions\": [\"...\", \"...\", \"...\", \"...\"]}. Labels are short (2 to 5 words), noun phrases, no numbering." },
+            { type: "text", text: "You are building the concept map for an oral exam. From THIS course material only, extract the core topics a student would be examined on (8 to 14). Do not introduce topics that are not present in the material. Treat broad or introductory material sparsely, as a few high-level concepts; for specific, quantitative, or formula-driven material (for example rate and capacity, Little's Law, bottlenecks, utilization) capture the concepts more granularly. For each topic, also write 4 oral-exam questions grounded strictly in the material that probe understanding of that topic. Return ONLY a JSON array, no prose, no markdown fences, each item {\"label\": \"...\", \"questions\": [\"...\", \"...\", \"...\", \"...\"]}. Labels are short (2 to 5 words), noun phrases, no numbering." },
           ],
         }],
       });
@@ -798,7 +798,7 @@ async function extractTopicsFromSlides(file, onProgress) {
     await new Promise(r => setTimeout(r, s.delay));
     onProgress(s.msg, s.pct);
   }
-  return MBA_TOPICS;
+  return OPS_TOPICS;
 }
 
 // ── Simulated Claude API call for exam generation ──
@@ -993,6 +993,100 @@ function topicBank(id, label) {
   return base.concat(extra).filter(q => (seen.has(q) ? false : (seen.add(q), true)));
 }
 
+// ── Operations Management sample (Prof. Sudheer Gupta, Berkeley Haas) ──
+// Grounded in the uploaded decks: Class 1 (Operations Strategy, kept sparse),
+// Class 2 Part I (Performance Measures & Little's Law) and Part II (Rate & Capacity).
+const OPS_TOPICS = [
+  { id: "opsstrategy", label: "Operations Strategy" },
+  { id: "priorities",  label: "Competitive Priorities" },
+  { id: "processtypes", label: "Process Types" },
+  { id: "metrics",     label: "Process Metrics" },
+  { id: "littleslaw",  label: "Little's Law" },
+  { id: "invmeasures", label: "Inventory Measures" },
+  { id: "cashcycle",   label: "Cash Conversion Cycle" },
+  { id: "activitycap", label: "Activity Time & Capacity" },
+  { id: "bottleneck",  label: "Bottleneck & Process Capacity" },
+  { id: "cycleflow",   label: "Cycle Time & Flow Time" },
+  { id: "utilization", label: "Utilization & Implied Utilization" },
+  { id: "levers",      label: "Levers to Increase Capacity" },
+];
+
+const OPS_POOL = {
+  opsstrategy: [
+    "The course frames Value = Capabilities × (Assets + Processes). Explain each term and why capabilities multiply rather than add.",
+    "Dell, Toyota, and Walmart each won on operations. Pick one and explain the capability it built and the asset-and-process choices behind it.",
+    "Why does the course argue that capacity is generally more rigid than demand, and what does that imply for matching supply and demand?",
+    "What does it mean that a firm's operating system, not a single product, is the source of competitive advantage?",
+  ],
+  priorities: [
+    "The four competitive priorities are cost, quality, time, and variety. Explain why firms usually face trade-offs among them.",
+    "Give an example of a firm that overcame an apparent trade-off (for instance Dell on cost versus variety) and explain how operations made it possible.",
+    "Distinguish product quality from process quality, and explain why a firm might excel at one but not the other.",
+    "For a business you know, which competitive priority should operations optimize for, and what would it sacrifice?",
+  ],
+  processtypes: [
+    "Contrast a job shop with a flow shop on volume, variety, resource flexibility, and variable cost.",
+    "Using the product-process matrix, explain what goes wrong when process choice does not match a product's volume and variety.",
+    "Why does a job shop carry high variable cost while a flow shop achieves low variable cost?",
+    "Place a commercial printer and an oil refinery on the product-process matrix and describe the managerial challenge each faces.",
+  ],
+  metrics: [
+    "Define the three core process metrics, throughput (R), flow time (T), and inventory (I), and what each measures.",
+    "Why might two firms with the same throughput have very different flow times? What would explain the gap?",
+    "Explain the difference between flow rate and capacity, and describe when flow rate sits below capacity.",
+    "Of the process metrics (rate, time, inventory, quality, cost), which would you watch first for a subscription business, and why?",
+  ],
+  littleslaw: [
+    "State Little's Law and define each term. Why does it hold regardless of the order in which units are processed?",
+    "O'Neill orders 15,000 wetsuits per month with a 2-month shipping lead time. Use Little's Law to find the pipeline inventory.",
+    "A hotel has 100 rooms at 80% occupancy and receives 20 guests per day. Use Little's Law to find the average length of stay.",
+    "In a subscription model like Netflix or Rent the Runway, how does lowering flow time T (subscribers fixed) affect throughput R, and why does that raise cost but not revenue?",
+  ],
+  invmeasures: [
+    "Define days-of-supply and inventory turns, and show how each follows from Little's Law (T = I/R and 1/T = R/I).",
+    "Walmart in 2010 had inventory of $33,160M and COGS of $304,657M. Explain how you'd compute annual turns and days-of-supply, and why COGS, not sales, is the flow rate.",
+    "Why is inventory valued at cost rather than sales price when computing turns, and what error results if you use sales?",
+    "A firm improves inventory turns from 6 to 12. Explain what changed operationally and why it matters financially.",
+  ],
+  cashcycle: [
+    "Define the cash conversion cycle in terms of inventory period, days receivable, and days payable.",
+    "Dell's cash conversion cycle was about negative 43 days. Explain what a negative cycle means and how Dell's operating model produced it.",
+    "Which lever, inventory period, receivables, or payables, would you pull first to shorten a firm's cash cycle, and why?",
+    "How does the cash conversion cycle connect operational efficiency to a firm's need for working capital?",
+  ],
+  activitycap: [
+    "If a resource takes 1.5 minutes of activity time per unit and there is one unit, what is its capacity per hour, and what is the general formula?",
+    "Define activity time (p) and resource capacity, and explain why capacity = m/p when there are m identical units.",
+    "How does adding a second identical machine at a step change that resource's capacity, and does that always raise process capacity?",
+    "Distinguish a resource's unit load from its capacity, and explain how resource utilization is computed at full capacity.",
+  ],
+  bottleneck: [
+    "Define the bottleneck and explain why process capacity equals the capacity of the bottleneck.",
+    "Bread-making runs 40 loaves/hour and packaging 60/hour. Identify the bottleneck and the process capacity, and explain.",
+    "Why can adding capacity at the bottleneck shift the bottleneck to another resource? Give the mechanism.",
+    "Explain how line balancing can raise process capacity without adding any resources.",
+  ],
+  cycleflow: [
+    "Distinguish cycle time from flow time. Why does the cycle time of the process equal the cycle time of the bottleneck?",
+    "For a multistage process, how do you compute flow time, and why is it the sum of processing times plus any wait times?",
+    "Two units come out of a process; explain what determines the time between them and how it relates to the bottleneck.",
+    "If flow time is 15 minutes but cycle time is 1.5 minutes, what does that tell you about work-in-process and parallelism?",
+  ],
+  utilization: [
+    "Define implied utilization as demand over capacity, and explain how it identifies the bottleneck with multiple flow-unit types.",
+    "ABC Insurance runs New and Renewal quotes through underwriting, rating, and policy writing. Walk through how you'd compute each resource's implied utilization to find the bottleneck.",
+    "Why can implied utilization exceed 100%, and what does that imply about demand versus capacity?",
+    "Distinguish utilization (flow rate / capacity) from implied utilization (demand / capacity), and explain when they differ.",
+  ],
+  levers: [
+    "The course lists three levers to increase process capacity. Name them and give an example of each.",
+    "Explain why moving work content from a bottleneck to a non-bottleneck raises process capacity, and what limits this.",
+    "'Do it right the first time' is listed as a lever. Explain how quality problems reduce effective bottleneck capacity.",
+    "When does increasing batch or load sizes help capacity, and what trade-off does it introduce?",
+  ],
+};
+Object.assign(QUESTION_POOL, OPS_POOL);
+
 // Assemble the student's question set from a chosen exam's distribution.
 function assembleExamQuestions(distribution) {
   const out = [];
@@ -1026,7 +1120,7 @@ async function generateExams(config, onProgress) {
 // ──────────────────────────────────────────────
 
 function StepLogin({ onNext }) {
-  const [email, setEmail] = useState("matteo.benetton@haas.berkeley.edu");
+  const [email, setEmail] = useState("sudheer.gupta@haas.berkeley.edu");
   const [pass, setPass] = useState("••••••••");
   const [loading, setLoading] = useState(false);
 
@@ -1047,7 +1141,7 @@ function StepLogin({ onNext }) {
           UC Berkeley Haas School of Business
         </div>
         <div className="login-hint">
-          <strong>Demo account pre-filled.</strong> Click Sign In to continue as Prof. Matteo Benetton.
+          <strong>Demo account pre-filled.</strong> Click Sign In to continue as Prof. Sudheer Gupta.
         </div>
         <label>Email</label>
         <input type="email" value={email} onChange={e => setEmail(e.target.value)} />
@@ -1067,8 +1161,8 @@ function StepLogin({ onNext }) {
 }
 
 function StepOnboard({ onNext }) {
-  const [name, setName] = useState("MBA Finance Core");
-  const [desc, setDesc] = useState("Haas MBA core finance curriculum covering corporate finance, valuation, and capital markets. Spring 2026.");
+  const [name, setName] = useState("Operations Management");
+  const [desc, setDesc] = useState("Berkeley MBA for Executives core operations curriculum covering operations strategy, process metrics, Little's Law, and rate and capacity. Spring 2026.");
   const [dept, setDept] = useState("Finance");
 
   return (
@@ -1110,6 +1204,19 @@ function StepUpload({ onNext }) {
   const [progress, setProgress] = useState(0);
   const [statusMsg, setStatusMsg] = useState("");
   const [topics, setTopics] = useState(null);
+  const [newConcept, setNewConcept] = useState("");
+
+  function removeTopic(id) { setTopics(prev => (prev || []).filter(t => t.id !== id)); }
+  function addConcept() {
+    const label = newConcept.trim();
+    if (!label) return;
+    setTopics(prev => {
+      const list = prev || [];
+      if (list.some(t => t.label.toLowerCase() === label.toLowerCase())) return list;
+      return [...list, { id: slugify(label, list.length), label }];
+    });
+    setNewConcept("");
+  }
 
   function handleFile(f) {
     setFile(f);
@@ -1161,7 +1268,7 @@ function StepUpload({ onNext }) {
         <div className="file-indicator">
           <span className="file-icon">📊</span>
           <div>
-            <div style={{ fontWeight: 600 }}>{file.name || "MBA_Finance_Slides_Spring2026.pdf"}</div>
+            <div style={{ fontWeight: 600 }}>{file.name || "Gupta_Operations_Class2.pdf"}</div>
             <div style={{ fontSize: 12, color: T.muted }}>
               {file.size ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : "12.4 MB"} · {((file.name || "slides.pdf").split(".").pop() || "PDF").toUpperCase()}
             </div>
@@ -1178,7 +1285,7 @@ function StepUpload({ onNext }) {
       {/* Simulate upload for demo */}
       {!file && (
         <div style={{ textAlign: "center", marginBottom: 20 }}>
-          <button className="btn-secondary" onClick={() => setFile({ name: "MBA_Finance_Slides_Spring2026.pdf", size: 13004800 })}>
+          <button className="btn-secondary" onClick={() => setFile({ name: "Gupta_Operations_Class2.pdf", size: 13004800 })}>
             📎 Use sample slides (demo)
           </button>
         </div>
@@ -1207,21 +1314,37 @@ function StepUpload({ onNext }) {
       {topics && (
         <>
           <div className="status-box success">
-            ✓ Extracted {topics.length} topics · Concept graph ready · EDS baseline calibrated
+            ✓ Extracted {topics.length} concepts · Concept graph ready · EDS baseline calibrated
           </div>
-          <div className="section-label">Discovered Topics</div>
+          <div className="section-label">Concept Graph — Review &amp; Curate</div>
+          <p style={{ fontSize: 13, color: T.inkLight, margin: "-4px 0 14px", lineHeight: 1.6 }}>
+            These concepts were pulled from your material and form the exam's concept graph. Remove anything you don't
+            cover, or add a concept we missed. This second pass grounds the assessment in exactly what you teach.
+          </p>
           <div className="topic-grid">
             {topics.map(t => (
-              <div key={t.id} className="topic-chip selected">
+              <div key={t.id} className="topic-chip selected" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                 <span className="check">✓</span> {t.label}
+                <button onClick={() => removeTopic(t.id)} title="Remove concept"
+                  style={{ background: "transparent", border: "none", color: "inherit", cursor: "pointer",
+                    fontSize: 15, lineHeight: 1, padding: "0 0 0 2px", opacity: 0.65 }}>×</button>
               </div>
             ))}
           </div>
-          <div className="card-footer">
+          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+            <input value={newConcept} onChange={e => setNewConcept(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") addConcept(); }}
+              placeholder="Add a concept the extractor missed…"
+              style={{ flex: 1, padding: "9px 12px", border: `1px solid ${T.border}`, borderRadius: 8,
+                fontFamily: "Inter, sans-serif", fontSize: 14, color: T.ink, background: T.white, outline: "none" }} />
+            <button className="btn-secondary" onClick={addConcept} disabled={!newConcept.trim()}
+              style={{ opacity: newConcept.trim() ? 1 : 0.5 }}>+ Add concept</button>
+          </div>
+          <div className="card-footer" style={{ marginTop: 18 }}>
             <div style={{ fontSize: 13, color: T.muted }}>
-              {topics.length} topics {TopicsSource === "slides" ? "extracted from your slides" : "loaded"}
+              {topics.length} concepts {TopicsSource === "slides" ? "extracted from your slides" : "loaded"}
             </div>
-            <button className="btn-primary" onClick={() => onNext(topics)}>Configure Exam →</button>
+            <button className="btn-primary" onClick={() => onNext(topics)} disabled={!topics.length}>Configure Exam →</button>
           </div>
           {TopicsSource === "sample-fallback" && (
             <div style={{ marginTop: 10, fontSize: 12, color: T.inkLight, background: "#FFFBF0",
@@ -1448,7 +1571,7 @@ const EXAM_QUESTIONS = {
 const MAX_TURNS = 3; // max turns per question before moving on
 
 function StudentPreview({ exam, config, onClose }) {
-  const finance = DISCIPLINES.find(d => d.id === "finance") || DISCIPLINES[0];
+  const finance = DISCIPLINES.find(d => d.id === "ops") || DISCIPLINES[0];
   return (
     <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(20,20,30,0.6)", zIndex:200,
       display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
@@ -1538,7 +1661,7 @@ function exportRubric(chosen, config, dist, qScores) {
 <div class="page">
   <div class="rubric-header">
     <h1>${chosen.title} · Scoring Rubric</h1>
-    <p>Epistemy · MBA Finance Core · Prof. Matteo Benetton · UC Berkeley Haas · ${new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})}</p>
+    <p>Epistemy · Operations Management · Prof. Sudheer Gupta · UC Berkeley Haas · ${new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})}</p>
   </div>
   <div class="rubric-body">
     <h2>Exam Configuration</h2>
@@ -1784,7 +1907,7 @@ function StepComplete({ exam, config }) {
           </p>
 
           <div className="exam-summary">
-            <div className="summary-row"><span>Course</span><strong>MBA Finance Core · Haas</strong></div>
+            <div className="summary-row"><span>Course</span><strong>Operations Management · Haas</strong></div>
             <div className="summary-row"><span>Exam type</span><strong>{chosen && chosen.title}</strong></div>
             <div className="summary-row"><span>Questions</span><strong>{totalQ}</strong></div>
             <div className="summary-row"><span>Duration</span><strong>{config.examLen} minutes</strong></div>
@@ -1945,20 +2068,23 @@ const DISCIPLINES = [
   {
     id: "ops",
     title: "Operations",
-    subtitle: "Supply Chain Disruption",
+    subtitle: "Rate, Capacity & Little's Law",
     icon: "🔗",
     color: "#3A1A00",
     accent: "#D47A20",
-    scenario: "You are a Socratic operations examiner. Probe understanding of supply chain resilience, bullwhip effect, inventory buffers, and demand uncertainty. One question per turn, 2–3 sentences.",
+    scenario: "You are a Socratic operations examiner. Probe understanding of process metrics, Little's Law, activity time and capacity, bottlenecks, cycle and flow time, and implied utilization. One question per turn, 2–3 sentences.",
     nodes: [
-      { id: "dem", label: "Demand Variability", x: 200, y: 80 },
-      { id: "bw", label: "Bullwhip Effect", x: 420, y: 80 },
-      { id: "inv", label: "Inventory Policy", x: 200, y: 210 },
-      { id: "lead", label: "Lead Time", x: 420, y: 210 },
-      { id: "risk", label: "Supply Risk", x: 310, y: 330 },
-      { id: "res", label: "Resilience Strategy", x: 560, y: 210 },
+      { id: "act", label: "Activity Time (p)", x: 140, y: 70 },
+      { id: "cap", label: "Resource Capacity", x: 350, y: 70 },
+      { id: "bn", label: "Bottleneck", x: 560, y: 70 },
+      { id: "rate", label: "Throughput (R)", x: 140, y: 200 },
+      { id: "pcap", label: "Process Capacity", x: 350, y: 200 },
+      { id: "cyc", label: "Cycle Time", x: 560, y: 200 },
+      { id: "ftime", label: "Flow Time (T)", x: 140, y: 340 },
+      { id: "little", label: "Little's Law", x: 360, y: 340 },
+      { id: "inv", label: "Inventory (I)", x: 570, y: 340 },
     ],
-    edges: [["dem","bw"],["dem","inv"],["lead","inv"],["lead","bw"],["inv","risk"],["bw","risk"],["risk","res"]],
+    edges: [["act","cap"],["cap","bn"],["bn","pcap"],["pcap","rate"],["bn","cyc"],["rate","little"],["ftime","little"],["inv","little"]],
   },
   {
     id: "acct",
@@ -1992,7 +2118,7 @@ const ExamStore = { trackId: null, trackLabel: null, questions: null };
 const EXAM_CONTEXT = {
   finance: "Welcome to your MBA Finance Core oral examination. I'll take you through a sequence of questions on valuation, cost of capital, and capital structure. Answer in your own words and reason out loud. I'm following the logic of your thinking, not just the final number. Let's begin.",
   cs: "Welcome to your oral examination on dynamic programming. I'll move through a series of questions on subproblem structure, memoization, and complexity. Talk me through your reasoning as you go. Let's begin.",
-  ops: "Welcome to your operations oral examination. We'll work through questions on supply chain variability, inventory, and resilience. Reason out loud so I can follow your thinking. Let's begin.",
+  ops: "Welcome to your Operations Management oral examination. We'll work through questions on process metrics, Little's Law, and rate and capacity, from throughput and flow time to bottlenecks and implied utilization. Reason out loud so I can follow your thinking, not just the final number. Let's begin.",
   acct: "Welcome to your accounting oral examination on revenue recognition under ASC 606. I'll ask a sequence of questions on obligations, timing, and judgment. Explain your reasoning as you answer. Let's begin.",
 };
 
@@ -2049,18 +2175,18 @@ const STUDENT_BANKS = {
     { topic: "Correctness", q: "How would you convince a skeptic that your DP recurrence is correct?" },
     { topic: "Limits", q: "Where does DP break down, and what technique would you reach for instead?" },
   ],
-  // ── Operations · Supply Chain (default) ──
+  // ── Operations · Rate, Capacity & Little's Law (default) ──
   ops: [
-    { topic: "Demand Variability", q: "How does variability in end demand propagate upstream through a supply chain?" },
-    { topic: "Bullwhip Effect", q: "What causes the bullwhip effect, and name two levers that dampen it." },
-    { topic: "Inventory Policy", q: "How do you set safety stock, and what does it trade off?" },
-    { topic: "Lead Time", q: "Why does lead time variability hurt more than a longer but stable lead time?" },
-    { topic: "Resilience", q: "Distinguish redundancy from flexibility as resilience strategies. When is each right?" },
-    { topic: "Risk Pooling", q: "How does pooling inventory across locations reduce total safety stock?" },
-    { topic: "Sourcing", q: "Weigh single sourcing against dual sourcing for a critical component." },
-    { topic: "Disruption", q: "Walk me through how you'd quantify exposure to a single-supplier failure." },
-    { topic: "Coordination", q: "How does information sharing across the chain change the bullwhip dynamics?" },
-    { topic: "Trade-offs", q: "Where does a lean, low-inventory strategy become a liability?" },
+    { topic: "Process Metrics", q: "Define throughput (R), flow time (T), and inventory (I), and explain what each measures in a process." },
+    { topic: "Little's Law", q: "State Little's Law and explain why it holds regardless of the order in which units are processed." },
+    { topic: "Little's Law", q: "A hotel has 100 rooms at 80% occupancy and takes in 20 guests per day. Use Little's Law to find the average length of stay." },
+    { topic: "Activity Time & Capacity", q: "If activity time is 1.5 minutes per unit on one machine, what is the capacity per hour, and what is the general formula?" },
+    { topic: "Bottleneck", q: "Define the bottleneck and explain why process capacity equals the capacity of the bottleneck." },
+    { topic: "Bottleneck", q: "Bread-making runs 40 loaves/hour and packaging 60/hour. Identify the bottleneck and the process capacity, and explain." },
+    { topic: "Cycle Time & Flow Time", q: "Distinguish cycle time from flow time, and explain why the process cycle time equals the bottleneck's cycle time." },
+    { topic: "Implied Utilization", q: "Define implied utilization as demand over capacity, and explain how it locates the bottleneck with multiple flow-unit types." },
+    { topic: "Capacity Levers", q: "Name the levers to increase process capacity, and explain why moving work off the bottleneck helps." },
+    { topic: "Inventory Measures", q: "Relate days-of-supply and inventory turns to Little's Law (T = I/R and 1/T = R/I)." },
   ],
   // ── Accounting · Revenue Recognition (default) ──
   acct: [
@@ -2210,8 +2336,8 @@ function DisciplineLanding({ onSelect }) {
         </p>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-        {DISCIPLINES.map(d => {
-          const assigned = d.id === "finance";
+        {[...DISCIPLINES].sort((a, b) => (a.id === "ops" ? -1 : b.id === "ops" ? 1 : 0)).map(d => {
+          const assigned = d.id === "ops";
           const subtitle = assigned && ExamStore.trackLabel ? ExamStore.trackLabel : d.subtitle;
           return (
             <div key={d.id}
@@ -2271,18 +2397,18 @@ function downloadBlob(filename, blob) {
 // ── Oral Exam Engine ──
 function OralExam({ discipline, studentName, onBack, previewMode }) {
   // ── Resolve bank + context ──
-  const derived = (discipline.id === "finance" && ExamStore.questions && ExamStore.questions.length)
+  const derived = (discipline.id === "ops" && ExamStore.questions && ExamStore.questions.length)
     ? ExamStore.questions : null;
   const bank =
     derived ||
-    (discipline.id === "finance"
+    (discipline.id === "ops"
       ? (STUDENT_BANKS[ExamStore.trackId] || STUDENT_BANKS.balanced)
       : (STUDENT_BANKS[discipline.id] || STUDENT_BANKS.balanced));
   const examContext = EXAM_CONTEXT[discipline.id] || EXAM_CONTEXT.finance;
   const N = bank.length;
-  const usingProfessorSet = discipline.id === "finance" && (!!derived || !!ExamStore.trackId);
+  const usingProfessorSet = discipline.id === "ops" && (!!derived || !!ExamStore.trackId);
   const sourceLabel = usingProfessorSet
-    ? `Prof. Benetton · ${ExamStore.trackLabel || "selected exam"}`
+    ? `Prof. Gupta · ${ExamStore.trackLabel || "selected exam"}`
     : "Default topic set";
   const MAX_Q_TURNS = 3;
 
@@ -2906,7 +3032,7 @@ function InstructorApp({ onSwitchRole }) {
           {step > 0 && (
             <>
               <div className="avatar">MB</div>
-              <span>Prof. Matteo Benetton</span>
+              <span>Prof. Sudheer Gupta</span>
             </>
           )}
           <button onClick={onSwitchRole}
@@ -3032,7 +3158,7 @@ function RoleSelect({ onSelect }) {
         </div>
 
         <div style={{ marginTop: 48, fontSize: 12, color: "rgba(245,240,232,0.25)" }}>
-          UC Berkeley Haas · MBA Finance Core · Demo Environment
+          UC Berkeley Haas · Operations Management · Demo Environment
         </div>
       </div>
     </>
