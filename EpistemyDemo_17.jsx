@@ -798,7 +798,7 @@ async function extractTopicsFromSlides(file, onProgress) {
     await new Promise(r => setTimeout(r, s.delay));
     onProgress(s.msg, s.pct);
   }
-  return COURSE.topics;
+  return OPS_TOPICS;
 }
 
 // ── Simulated Claude API call for exam generation ──
@@ -1116,106 +1116,6 @@ const OPS_CASES = [
   },
 ];
 
-// ── Foundations of Business (UGBA) · Leadership & Ethics (Prof. Harris Sondak) ──
-const UGBA_TOPICS = [
-  { id: "defining",      label: "Defining Principles" },
-  { id: "statusquo",     label: "Question the Status Quo" },
-  { id: "beyond",        label: "Beyond Yourself" },
-  { id: "frameworks",    label: "Ethical Frameworks" },
-  { id: "utilitarian",   label: "Utilitarian Ethics" },
-  { id: "deontological", label: "Deontological Ethics" },
-  { id: "dilemmas",      label: "Gray-Area Dilemmas" },
-  { id: "orgdesign",     label: "Ethical Organization Design" },
-  { id: "stakeholders",  label: "Stakeholders vs Shareholders" },
-];
-
-const UGBA_POOL = {
-  defining: [
-    "Name the four Berkeley Haas Defining Leadership Principles and explain what each asks of a leader in practice.",
-    "The principles are described as culture, not slogans. What does it mean to lead with 'Confidence Without Attitude' in a disagreement?",
-    "Which of the four principles is hardest to live by as a leader, and why?",
-    "How do the four principles function together as a system rather than four separate values?",
-  ],
-  statusquo: [
-    "Give an example of a business norm a leader should question, and make the ethical case for changing it.",
-    "'Question the Status Quo' can look like recklessness. How do you distinguish principled challenge from contrarianism?",
-    "When is defending the status quo the more ethical choice? Give an example.",
-    "How would you question the status quo without undermining a team that built the current approach?",
-  ],
-  beyond: [
-    "'Beyond Yourself' asks leaders to act for the broader good. How would you operationalize that in a real resource-allocation decision?",
-    "Where does 'Beyond Yourself' conflict with a manager's duty to shareholders, and how do you reconcile it?",
-    "Give an example where acting 'Beyond Yourself' carries a real personal or career cost. Would you still do it?",
-    "How is 'Beyond Yourself' different from corporate social responsibility used as a marketing posture?",
-  ],
-  frameworks: [
-    "Distinguish a teleological (outcome-based) from a deontological (duty-based) ethical framework for a manager.",
-    "Why does classifying a decision as utilitarian or deontological change what evidence you look for?",
-    "Give a management case where the two frameworks reach opposite conclusions, and explain the divergence.",
-    "Which framework do you default to, and what blind spot does that create?",
-  ],
-  utilitarian: [
-    "A manager can hit a target by delaying a safety fix that will probably harm a few customers. Analyze it on purely utilitarian grounds.",
-    "What is the strongest objection to utilitarian reasoning in a corporate setting?",
-    "How do you handle the problem that utilitarianism can justify harming a minority for the majority's benefit?",
-    "How would you actually estimate the 'greatest good' in a real decision with uncertain outcomes?",
-  ],
-  deontological: [
-    "Give a duty-based analysis of a company selling user data it legally can, but promised it wouldn't.",
-    "What rights or duties does a deontologist say a firm owes employees regardless of the bottom line?",
-    "Where does rigid duty-based reasoning break down in business, and how do you handle conflicting duties?",
-    "Kant says treat people as ends, not merely means. Apply that to how a firm treats gig workers.",
-  ],
-  dilemmas: [
-    "Walk me through how you'd structure the analysis of a gray-area corporate dilemma where no option is clearly right.",
-    "What makes a dilemma genuinely 'gray' rather than a clear right-versus-wrong choice?",
-    "How do you reach a defensible decision when stakeholders will be harmed either way?",
-    "Describe a real corporate gray-area dilemma and the framework you'd bring to it.",
-  ],
-  orgdesign: [
-    "The argument is that good employees still make bad choices. Explain why, and name one structural change that reduces unethical behavior.",
-    "Why is hiring 'ethical people' insufficient on its own, and what does deliberately designing an ethical organization add?",
-    "What incentive structures reliably push otherwise-good employees toward unethical behavior?",
-    "Design one concrete organizational safeguard against a predictable ethical failure, and explain the mechanism.",
-  ],
-  stakeholders: [
-    "Contrast a shareholder-primacy view with a stakeholder view when a plant closure would cut costs but devastate a town.",
-    "Is 'maximize shareholder value' an ethical principle or an abdication of one? Defend your view.",
-    "How does the triple bottom line reframe who a company is accountable to?",
-    "When stakeholder interests conflict, how should a leader prioritize, and on what basis?",
-  ],
-};
-Object.assign(QUESTION_POOL, UGBA_POOL);
-
-const UGBA_CASES = [
-  {
-    id: "factory",
-    title: "Case · Overseas Factory",
-    topic: "Leadership & Ethics",
-    context: "A mid-size apparel company discovers that one of its overseas contract factories, which makes 30% of its product at the lowest cost, has unsafe working conditions. Fixing it raises costs and delays the season. Cutting the factory hurts workers who depend on those jobs and disrupts supply.",
-    parts: [
-      "Analyze this decision through a utilitarian lens: what are the costs and benefits, and to whom?",
-      "Now analyze it through a deontological lens: what duties or rights are at stake regardless of outcomes?",
-      "Which Berkeley Haas Defining Principle most applies here, and how would it shape your recommendation?",
-      "The CEO says 'we hire ethical people, so this won't recur.' Why is that insufficient, and what structural change would you put in place?",
-    ],
-  },
-];
-
-// ── Active instructor course. The instructor flow (sign-in, course setup, the
-// built-and-assigned exam) is driven entirely by this object. Point it at a
-// different discipline to demo another professor's course.
-const COURSE = {
-  disciplineId: "ugba",
-  professor: "Prof. Harris Sondak",
-  professorShort: "Prof. Sondak",
-  email: "harris.sondak@berkeley.edu",
-  name: "Foundations of Business",
-  desc: "Berkeley Haas undergraduate Foundations of Business (UGBA), Leadership & Ethics module: the Haas Defining Leadership Principles, ethical frameworks, and reasoning about gray-area corporate dilemmas. Spring 2026.",
-  topics: UGBA_TOPICS,
-  caseSet: UGBA_CASES[0],
-};
-
 // Assemble the student's question set from a chosen exam's distribution.
 function assembleExamQuestions(distribution) {
   const out = [];
@@ -1249,7 +1149,7 @@ async function generateExams(config, onProgress) {
 // ──────────────────────────────────────────────
 
 function StepLogin({ onNext }) {
-  const [email, setEmail] = useState(COURSE.email);
+  const [email, setEmail] = useState("sudheer.gupta@haas.berkeley.edu");
   const [pass, setPass] = useState("••••••••");
   const [loading, setLoading] = useState(false);
 
@@ -1270,7 +1170,7 @@ function StepLogin({ onNext }) {
           UC Berkeley Haas School of Business
         </div>
         <div className="login-hint">
-          <strong>Demo account pre-filled.</strong> Click Sign In to continue as {COURSE.professor}.
+          <strong>Demo account pre-filled.</strong> Click Sign In to continue as Prof. Sudheer Gupta.
         </div>
         <label>Email</label>
         <input type="email" value={email} onChange={e => setEmail(e.target.value)} />
@@ -1290,9 +1190,9 @@ function StepLogin({ onNext }) {
 }
 
 function StepOnboard({ onNext }) {
-  const [name, setName] = useState(COURSE.name);
-  const [desc, setDesc] = useState(COURSE.desc);
-  const [dept, setDept] = useState("Business Management");
+  const [name, setName] = useState("Operations Management");
+  const [desc, setDesc] = useState("Berkeley MBA for Executives core operations curriculum covering operations strategy, process metrics, Little's Law, and rate and capacity. Spring 2026.");
+  const [dept, setDept] = useState("Finance");
 
   return (
     <div className="card">
@@ -1306,7 +1206,6 @@ function StepOnboard({ onNext }) {
 
       <label>Department</label>
       <select value={dept} onChange={e => setDept(e.target.value)}>
-        <option>Business Management</option>
         <option>Finance</option>
         <option>Accounting</option>
         <option>Economics</option>
@@ -1398,7 +1297,7 @@ function StepUpload({ onNext }) {
         <div className="file-indicator">
           <span className="file-icon">📊</span>
           <div>
-            <div style={{ fontWeight: 600 }}>{file.name || "UGBA_sample.pdf"}</div>
+            <div style={{ fontWeight: 600 }}>{file.name || "Gupta_Operations_Class2.pdf"}</div>
             <div style={{ fontSize: 12, color: T.muted }}>
               {file.size ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : "12.4 MB"} · {((file.name || "slides.pdf").split(".").pop() || "PDF").toUpperCase()}
             </div>
@@ -1415,7 +1314,7 @@ function StepUpload({ onNext }) {
       {/* Simulate upload for demo */}
       {!file && (
         <div style={{ textAlign: "center", marginBottom: 20 }}>
-          <button className="btn-secondary" onClick={() => setFile({ name: "UGBA_sample.pdf", size: 13004800 })}>
+          <button className="btn-secondary" onClick={() => setFile({ name: "Gupta_Operations_Class2.pdf", size: 13004800 })}>
             📎 Use sample slides (demo)
           </button>
         </div>
@@ -1765,7 +1664,7 @@ const EXAM_QUESTIONS = {
 const MAX_TURNS = 3; // max turns per question before moving on
 
 function StudentPreview({ exam, config, onClose }) {
-  const finance = DISCIPLINES.find(d => d.id === COURSE.disciplineId) || DISCIPLINES[0];
+  const finance = DISCIPLINES.find(d => d.id === "ops") || DISCIPLINES[0];
   return (
     <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(20,20,30,0.6)", zIndex:200,
       display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
@@ -1855,7 +1754,7 @@ function exportRubric(chosen, config, dist, qScores) {
 <div class="page">
   <div class="rubric-header">
     <h1>${chosen.title} · Scoring Rubric</h1>
-    <p>Epistemy · ${COURSE.name} · ${COURSE.professor} · UC Berkeley Haas · ${new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})}</p>
+    <p>Epistemy · Operations Management · Prof. Sudheer Gupta · UC Berkeley Haas · ${new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})}</p>
   </div>
   <div class="rubric-body">
     <h2>Exam Configuration</h2>
@@ -2101,7 +2000,7 @@ function StepComplete({ exam, config }) {
           </p>
 
           <div className="exam-summary">
-            <div className="summary-row"><span>Course</span><strong>{COURSE.name} · Haas</strong></div>
+            <div className="summary-row"><span>Course</span><strong>Operations Management · Haas</strong></div>
             <div className="summary-row"><span>Exam type</span><strong>{chosen && chosen.title}</strong></div>
             <div className="summary-row"><span>Questions</span><strong>{totalQ}</strong></div>
             <div className="summary-row"><span>Duration</span><strong>{config.examLen} minutes</strong></div>
@@ -2263,7 +2162,6 @@ const DISCIPLINES = [
     id: "ops",
     title: "Operations",
     subtitle: "Rate, Capacity & Little's Law",
-    instructor: "Prof. Sudheer Gupta",
     icon: "🔗",
     color: "#3A1A00",
     accent: "#D47A20",
@@ -2566,8 +2464,8 @@ function DisciplineLanding({ onSelect }) {
         </p>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-        {[...DISCIPLINES].sort((a, b) => (a.id === COURSE.disciplineId ? -1 : b.id === COURSE.disciplineId ? 1 : 0)).map(d => {
-          const assigned = d.id === COURSE.disciplineId;
+        {[...DISCIPLINES].sort((a, b) => (a.id === "ops" ? -1 : b.id === "ops" ? 1 : 0)).map(d => {
+          const assigned = d.id === "ops";
           const subtitle = assigned && ExamStore.trackLabel ? ExamStore.trackLabel : d.subtitle;
           return (
             <div key={d.id}
@@ -2630,29 +2528,26 @@ function downloadBlob(filename, blob) {
 // ── Oral Exam Engine ──
 function OralExam({ discipline, studentName, onBack, previewMode }) {
   // ── Resolve bank + context ──
-  const derived = (discipline.id === COURSE.disciplineId && ExamStore.questions && ExamStore.questions.length)
+  const derived = (discipline.id === "ops" && ExamStore.questions && ExamStore.questions.length)
     ? ExamStore.questions : null;
   const baseBank =
     derived ||
-    (STUDENT_BANKS[discipline.id] || STUDENT_BANKS.balanced);
+    (discipline.id === "ops"
+      ? (STUDENT_BANKS[ExamStore.trackId] || STUDENT_BANKS.balanced)
+      : (STUDENT_BANKS[discipline.id] || STUDENT_BANKS.balanced));
   // Append a case-based question set (shared context + ordered parts) when one is attached.
-  // The case is folded into the target total: topic questions are trimmed so that
-  // topic questions + case parts equals the selected count (e.g. 6 topic + 4 case = 10).
-  const caseSet = (discipline.id === COURSE.disciplineId && ExamStore.caseSet) ? ExamStore.caseSet : null;
+  const caseSet = (discipline.id === "ops" && ExamStore.caseSet) ? ExamStore.caseSet : null;
   const bank = caseSet
-    ? [
-        ...baseBank.slice(0, Math.max(0, baseBank.length - caseSet.parts.length)),
-        ...caseSet.parts.map((p, i) => ({
-          topic: caseSet.title, q: p, caseId: caseSet.id, caseTitle: caseSet.title,
-          context: caseSet.context, part: String.fromCharCode(97 + i), partsTotal: caseSet.parts.length,
-        })),
-      ]
+    ? [...baseBank, ...caseSet.parts.map((p, i) => ({
+        topic: caseSet.title, q: p, caseId: caseSet.id, caseTitle: caseSet.title,
+        context: caseSet.context, part: String.fromCharCode(97 + i), partsTotal: caseSet.parts.length,
+      }))]
     : baseBank;
   const examContext = EXAM_CONTEXT[discipline.id] || EXAM_CONTEXT.finance;
   const N = bank.length;
-  const usingProfessorSet = discipline.id === COURSE.disciplineId && (!!derived || !!ExamStore.trackId);
+  const usingProfessorSet = discipline.id === "ops" && (!!derived || !!ExamStore.trackId);
   const sourceLabel = usingProfessorSet
-    ? `${COURSE.professorShort} · ${ExamStore.trackLabel || "selected exam"}`
+    ? `Prof. Gupta · ${ExamStore.trackLabel || "selected exam"}`
     : (discipline.instructor ? `${discipline.instructor} · ${discipline.subtitle}` : "Default topic set");
   // Teacher-supplied rubric (applies only to the professor-built exam)
   const rubric = (usingProfessorSet && Array.isArray(ExamStore.rubric)) ? ExamStore.rubric : [];
@@ -3401,7 +3296,7 @@ function InstructorApp({ onSwitchRole }) {
             setChosenExam(def);
           }
           ExamStore.rubric = parseRubric(cfg.rubric);
-          ExamStore.caseSet = cfg.includeCase ? COURSE.caseSet : null;
+          ExamStore.caseSet = cfg.includeCase ? OPS_CASES[0] : null;
           setComplete(true);
         }} />}
         {complete && <StepComplete exam={chosenExam} config={examConfig} />}
@@ -3474,7 +3369,7 @@ function RoleSelect({ onSelect }) {
         </div>
 
         <div style={{ marginTop: 48, fontSize: 12, color: "rgba(245,240,232,0.25)" }}>
-          UC Berkeley Haas · {COURSE.name} · Demo Environment
+          UC Berkeley Haas · Operations Management · Demo Environment
         </div>
       </div>
     </>
